@@ -44,40 +44,29 @@ def is_not_forward_angle(n, theta):
                                           "https://arxiv.org/abs/1603.02720 Appendix C.\n"
                                           "n: " + str(n) + "   angle: " + str(theta))
     
-#     print('cos(theta).shape ', cos(theta).shape)
-#     print('n.shape ', n.shape)
     
     ncostheta = cos(theta) * n
     assert ncostheta.shape == theta.shape, 'ncostheta and theta shape doesnt match'
     
     answer = np.zeros(theta.shape, dtype=bool)
-
-#     print((ncostheta.imag > 0))
-    answer = (abs(ncostheta.imag) > 100 * EPSILON) * (ncostheta.imag > 0)
-    answer = (~(abs(ncostheta.imag) > 100 * EPSILON)) * (ncostheta.real > 0)
-    
-    
-#     if abs(ncostheta.imag) > 100 * EPSILON:
 #         # Either evanescent decay or lossy medium. Either way, the one that
 #         # decays is the forward-moving wave
-#         answer = (ncostheta.imag > 0)
-#     else:
+    answer = (abs(ncostheta.imag) > 100 * EPSILON) * (ncostheta.imag > 0)
 #         # Forward is the one with positive Poynting vector
 #         # Poynting vector is Re[n cos(theta)] for s-polarization or
 #         # Re[n cos(theta*)] for p-polarization, but it turns out they're consistent
 #         # so I'll just assume s then check both below
-#         answer = (ncostheta.real > 0)
-    # convert from numpy boolean to the normal Python boolean
+    answer = (~(abs(ncostheta.imag) > 100 * EPSILON)) * (ncostheta.real > 0)
+    
 
     # double-check the answer ... can't be too careful!
     error_string = ("It's not clear which beam is incoming vs outgoing. Weird"
                     " index maybe?\n"
                     "n: " + str(n) + "   angle: " + str(theta))
-#     if answer is True:
+
     assert (ncostheta.imag > -100 * EPSILON)[answer].all(), error_string
     assert (ncostheta.real > -100 * EPSILON)[answer].all(), error_string
     assert ((n * cos(theta.conjugate())).real > -100 * EPSILON)[answer].all(), error_string
-#     else:
     assert (ncostheta.imag < 100 * EPSILON)[~answer].all(), error_string
     assert (ncostheta.real < 100 * EPSILON)[~answer].all(), error_string
     assert ((n * cos(theta.conjugate())).real < 100 * EPSILON)[~answer].all(), error_string
@@ -91,7 +80,6 @@ def list_snell_new(n_list, th):
     """
     # Important that the arcsin here is numpy.lib.scimath.arcsin, not
     # numpy.arcsin! (They give different results e.g. for arcsin(2).)
-    from numpy.lib.scimath import arcsin
     
     sin_th = np.expand_dims(np.sin(th), axis=0)
     n0 = np.expand_dims(n_list[0], axis=-1)
@@ -101,7 +89,7 @@ def list_snell_new(n_list, th):
     angles = arcsin(np.einsum('ij,ki->jki', n0th, n))
     assert angles.shape == (th.shape[0], n_list.shape[0], n_list.shape[1]), (th.shape[0], n_list.shape[0], n_list.shape[1])
     
-    #dim(angles) = [dim_theta, dim_d, dim_lambda]
+    # dim(angles) = [dim_theta, dim_d, dim_lambda]
     # The first and last entry need to be the forward angle (the intermediate
     # layers don't matter, see https://arxiv.org/abs/1603.02720 Section 5)
 
@@ -200,8 +188,6 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     * pol, n_list, d_list, th_0, lam_vac--same as input
 
     """
-    # tictoc = TicToc() # uncomment for computing time measurment
-    # tictoc.tic()
     
     # n_list holds refracitve indices of every layer, beginning with the layer where the light enters the stack
     # d_list holds the thickness of every layer, same order as n_list
@@ -218,7 +204,8 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     # through the layer. Computed with Snell's law. Note that the "angles" may be
     # complex!
         
-    #########new
+    # if a constant refractive index is used (no dispersion) extend the array
+    # todo: call coh_tmm_fast for n=const
     if n_list.ndim==1:
         n_list = np.tile(n_list, (num_lambda,1)).T
         
@@ -228,16 +215,8 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     kz_list = np.einsum('ijk,k->kij', theta, 1/lam_vac) #[lambda, theta, d]
     
     
-    #########end new
-    
     # kz is the z-component of (complex) angular wavevector for forward-moving
     # wave. Positive imaginary part means decaying.
-
-#     theta = 2 * np.pi * np.einsum('ij,j->ij', cos(th_list), n_list )   
-#     kz_list = np.empty((num_lambda, num_angles, num_layers), dtype=complex)  # dimensions: [lambda, theta, n]
-#     kz_list[:] = theta
-#     kz_list = np.transpose(kz_list.T * 1/lam_vac)
-
 
     # delta is the total phase accrued by traveling through a given layer.
     # Ignore warning about inf multiplication
@@ -248,23 +227,11 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     # t_list and r_list hold the transmission and reflection coefficients from 
     # the Fresnel Equations
     
-    #########new
-#     t_list = zeros((num_angles, num_lambda, num_layers-1), dtype=complex)  
-#     r_list = zeros((num_angles, num_lambda, num_layers-1), dtype=complex)
-    
     t_list = interface_t_new(pol, n_list[:-1, :], n_list[1:, :], th_list[:, :-1, :], th_list[:, 1:, :])
     r_list = interface_r_new(pol, n_list[:-1, :], n_list[1:, :], th_list[:, :-1, :], th_list[:, 1:, :])
     
     A = exp(1j*delta[:,:, 1:-1]) 
     F = r_list[:, :, 1:]
-    #########end new
-    
-#     # todo: vectorize interface_t & _r and add unpolarized option for efficient calculation 
-#     t_list = zeros((num_angles, num_layers-1), dtype=complex)  
-#     r_list = zeros((num_angles, num_layers-1), dtype=complex)
-#     for i, th in enumerate(th_list):
-#         t_list[i] = interface_t(pol, n_list[:-1], n_list[1:], th_list[i, :-1], th_list[i, 1:] )
-#         r_list[i] = interface_r(pol, n_list[:-1], n_list[1:], th_list[i, :-1], th_list[i, 1:] )
 
     
 #     # A ist the propagation term for matrix optic and holds the appropriate accumulated phase for the thickness
@@ -284,15 +251,11 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
 
     Mtilde = np.empty((num_angles, num_lambda, 2, 2), dtype=complex)
     Mtilde[:, :] = make_2x2_array(1, 0, 0, 1, dtype=complex)
-
-    #print('M_list: ', M_list.shape)
-    #tictoc.tic()
     
     # contract the M_list matrix along the dimension of the layers, all
     for i in range(1, num_layers-1):
         Mtilde = np.einsum('ijkl,ijlm->ijkm', Mtilde, M_list[:,:,i])
 
-    # tictoc.toc()
     
     # M_r0 accounts for the first and last stack where the translation coefficients are 1 
     # todo: why compute separately?
@@ -303,10 +266,8 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     M_r0[:, :, 1, 1] = 1
     M_r0 = np.einsum('ijkl,ij->ijkl', M_r0, 1/t_list[:,:,0])
     
-    
     Mtilde = np.einsum('hijk,hikl->hijl', M_r0 , Mtilde)
 
-    # tictoc.toc()
     # Net complex transmission and reflection amplitudes
     r = Mtilde[:, :, 1,0] / Mtilde[:, :, 0,0]
     
@@ -322,21 +283,19 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     # for i in range(num_layers-2, 0, -1):
     #     vw = np.dot(M_list[i], vw)
     #     vw_list[i,:] = np.transpose(vw)
-    vw_list = 'not calculated'
+    vw_list = None
     
     # Net transmitted and reflected power, as a proportion of the incoming light
     # power.
     R = R_from_r(r)
 
     #todo
-    T=None
+    T = None
     #T = T_from_t_new(pol, t, n_list[0], n_list[-1], th, th_list[:, -1])
     
     # power_entering = power_entering_from_r(pol, r, n_list[0], th_0)
-    power_entering = 'not calculated'
-    # print('out')
-    # tictoc.toc()
-    # print('you have reached rock bottom')
+    power_entering = None
+
     return {'r': r, 't': t, 'R': R, 'T': T, 'power_entering': power_entering,
             'vw_list': vw_list, 'kz_list': kz_list, 'th_list': th_list,
             'pol': pol, 'n_list': n_list, 'd_list': d_list, 'th': th,
