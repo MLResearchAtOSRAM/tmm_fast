@@ -29,7 +29,7 @@ def plot_stacks(ax, indexes, thickness, labels=None, show_material=True):
 
     Example:
     fig, ax = plt.subplots(1,1)
-    ax = plot_stacks(ax, [2, 1, 2.5, 1.6], [5, 7, 3, 6]*1e-6, 'this is my stack' ) 
+    ax = plot_stacks(ax, [2, 1, 2.5, 1.6], [5, 7, 3, 6]*1e-6, labels='this is my stack' ) 
     plt.show()
     '''
     mat={'1.4585':'Si02',
