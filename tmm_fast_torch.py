@@ -5,6 +5,8 @@ import numpy as np
 # import dask
 
 import sys
+
+from torch._C import dtype
 EPSILON = sys.float_info.epsilon
 from numpy import inf, nan, isnan, pi, seterr
 
@@ -69,6 +71,54 @@ def is_not_forward_angle(n, theta):
     assert (ncostheta.real < 100 * EPSILON)[~answer].all(), error_string
     assert ((n * cos(theta.conjugate())).real < 100 * EPSILON)[~answer].all(), error_string
     return torch.tensor(~answer, dtype=int)
+
+def is_forward_angle(n, theta):
+    """
+    if a wave is traveling at angle theta from normal in a medium with index n,
+    calculate whether or not this is the forward-traveling wave (i.e., the one
+    going from front to back of the stack, like the incoming or outgoing waves,
+    but unlike the reflected wave). For real n & theta, the criterion is simply
+    -pi/2 < theta < pi/2, but for complex n & theta, it's more complicated.
+    See https://arxiv.org/abs/1603.02720 appendix D. If theta is the forward
+    angle, then (pi-theta) is the backward angle and vice-versa.
+    """
+    n = torch.tensor(n, dtype=torch.cfloat)
+    assert n.real * n.imag >= 0, ("For materials with gain, it's ambiguous which "
+                                  "beam is incoming vs outgoing. See "
+                                  "https://arxiv.org/abs/1603.02720 Appendix C.\n"
+                                  "n: " + str(n) + "   angle: " + str(theta))
+    # assert n.dtype is not complex,  ("For materials with gain, it's ambiguous which "
+    #                               "beam is incoming vs outgoing. See "
+    #                               "https://arxiv.org/abs/1603.02720 Appendix C.\n"
+    #                               "n: " + str(n) + "   angle: " + str(theta))
+
+    ncostheta = n * cos(theta)
+    ncostheta = torch.tensor(ncostheta, dtype=torch.cfloat)
+    if abs(ncostheta.imag) > 100 * EPSILON:
+        # Either evanescent decay or lossy medium. Either way, the one that
+        # decays is the forward-moving wave
+        answer = (ncostheta.imag > 0)
+    else:
+        # Forward is the one with positive Poynting vector
+        # Poynting vector is Re[n cos(theta)] for s-polarization or
+        # Re[n cos(theta*)] for p-polarization, but it turns out they're consistent
+        # so I'll just assume s then check both below
+        answer = (ncostheta.real > 0)
+    # convert from numpy boolean to the normal Python boolean
+    answer = bool(answer)
+    # double-check the answer ... can't be too careful!
+    error_string = ("It's not clear which beam is incoming vs outgoing. Weird"
+                    " index maybe?\n"
+                    "n: " + str(n) + "   angle: " + str(theta))
+    if answer is True:
+        assert ncostheta.imag > -100 * EPSILON, error_string
+        assert ncostheta.real > -100 * EPSILON, error_string
+        assert (n * cos(theta.conj())).real > -100 * EPSILON, error_string
+    else:
+        assert ncostheta.imag < 100 * EPSILON, error_string
+        assert ncostheta.real < 100 * EPSILON, error_string
+        assert (n * cos(theta.conjugate())).real < 100 * EPSILON, error_string
+    return answer
 
 def list_snell(n_list, th_0):
     """
@@ -164,6 +214,9 @@ def R_from_r(r):
     Calculate reflected power R, starting with reflection amplitude r.
     """
     return abs(r)**2
+
+def matmul_complex(t1,t2):
+    return torch.view_as_complex(torch.stack((t1.real @ t2.real - t1.imag @ t2.imag, t1.real @ t2.imag + t1.imag @ t2.real),dim=2))
 
 
 def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
@@ -264,14 +317,14 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     
     # M_list holds the transmission and reflection matrices from matrix-optics
     
-    M_list = torch.zeros((num_angles, num_lambda, num_layers, 2, 2), dtype=complex)
+    M_list = torch.zeros((num_angles, num_lambda, num_layers, 2, 2), dtype=torch.cfloat)
     M_list[:, :, 1:-1, 0, 0] = torch.einsum('hji,jhi->jhi', 1 / A, 1/t_list[:, :, 1:] )   
     M_list[:, :, 1:-1, 0, 1] = torch.einsum('hji,jhi->jhi', 1 / A, F / t_list[:, :, 1:]) 
     M_list[:, :, 1:-1, 1, 0] = torch.einsum('hji,jhi->jhi', A, F / t_list[:, :, 1:])  
     M_list[:, :, 1:-1, 1, 1] = torch.einsum('hji,jhi->jhi', A, 1 / t_list[:, :, 1:]) 
 
-    Mtilde = torch.empty((num_angles, num_lambda, 2, 2), dtype=complex)
-    Mtilde[:, :] = make_2x2_tensor(1, 0, 0, 1, dtype=complex)
+    Mtilde = torch.empty((num_angles, num_lambda, 2, 2), dtype=torch.cfloat)
+    Mtilde[:, :] = make_2x2_tensor(1, 0, 0, 1, dtype=torch.cfloat)
     
     # contract the M_list matrix along the dimension of the layers, all
     for i in range(1, num_layers-1):
@@ -280,7 +333,7 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     
     # M_r0 accounts for the first and last stack where the translation coefficients are 1 
     # todo: why compute separately?
-    M_r0 = torch.empty((num_angles, num_lambda, 2, 2), dtype=complex)
+    M_r0 = torch.empty((num_angles, num_lambda, 2, 2), dtype=torch.cfloat)
     M_r0[:, :,0, 0] = 1
     M_r0[:, :, 0, 1] = r_list[:, :, 0]
     M_r0[:, :, 1, 0] = r_list[:, :, 0]
@@ -298,7 +351,7 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     # total reflectivity calculation
     # vw_list[n] = [v_n, w_n]. v_0 and w_0 are undefined because the 0th medium
     # has no left interface.
-    # vw_list = zeros((num_layers, 2), dtype=complex)
+    # vw_list = zeros((num_layers, 2), dtype=torch.cfloat)
     # vw = tensor([[t],[0]])
     # vw_list[-1,:] = torch.transpose(vw)
     # for i in range(num_layers-2, 0, -1):
@@ -310,8 +363,8 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     # power.
     R = R_from_r(r)
 
-
-    T = T_from_t_new(pol, t, n_list[0], n_list[-1], th_list[:, 0], th_list[:, -1])
+    T=None
+    # T = T_from_t_new(pol, t, n_list[0], n_list[-1], th_list[:, 0], th_list[:, -1])
     
     # power_entering = power_entering_from_r(pol, r, n_list[0], th_0)
     power_entering = None
@@ -400,10 +453,13 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     # n_list holds refracitve indices of every layer, beginning with the layer where the light enters the stack
     # d_list holds the thickness of every layer, same order as n_list
     # lam_vac holds the vacuum wavelength of all wavelegths of interest
-    if type(n_list) is not torch.tensor:
+    if type(n_list) is not torch.Tensor:
         n_list = torch.from_numpy(n_list.copy())
+    if type(d_list) is not torch.Tensor:
         d_list = torch.from_numpy(d_list.copy())
+    if type(lam_vac) is not torch.Tensor:
         lam_vac = torch.from_numpy(lam_vac.copy())
+    if type(th_0) is not torch.Tensor:
         th_0 = torch.from_numpy(th_0.copy())
 
     num_layers = n_list.numpy().size
@@ -426,9 +482,9 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     # wave. Positive imaginary part means decaying.
 
     theta = 2 * np.pi * torch.einsum('ij,j->ij', cos(th_list), n_list )   
-    kz_list = torch.empty((num_lambda, num_angles, num_layers), dtype=complex)  # dimensions: [lambda, theta, n]
+    kz_list = torch.empty((num_lambda, num_angles, num_layers), dtype=torch.cfloat)  # dimensions: [lambda, theta, n]
     kz_list[:] = theta
-    kz_list = torch.transpose(kz_list.T * 1/lam_vac)
+    kz_list = torch.transpose(kz_list.T * 1/lam_vac, -1, 0)
     
 
     # delta is the total phase accrued by traveling through a given layer.
@@ -441,8 +497,8 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     # the Fresnel Equations
     
     # todo: vectorize interface_t & _r and add unpolarized option for efficient calculation 
-    t_list = zeros((num_angles, num_layers-1), dtype=complex)  
-    r_list = zeros((num_angles, num_layers-1), dtype=complex)
+    t_list = zeros((num_angles, num_layers-1), dtype=torch.cfloat)  
+    r_list = zeros((num_angles, num_layers-1), dtype=torch.cfloat)
     
     
     for i, th in enumerate(th_list):
@@ -459,33 +515,44 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     
     # M_list holds the transmission and reflection matrices from matrix-optics
     
-    M_list = torch.zeros((num_angles, num_lambda, num_layers, 2, 2), dtype=complex)
+    M_list = torch.zeros((num_angles, num_lambda, num_layers, 2, 2), dtype=torch.cfloat)
     M_list[:, :, 1:-1, 0, 0] = torch.einsum('hji,ji->jhi', 1 / A, 1/t_list[:, 1:] )   
     M_list[:, :, 1:-1, 0, 1] = torch.einsum('hji,ji->jhi', 1 / A, F / t_list[:, 1:]) 
     M_list[:, :, 1:-1, 1, 0] = torch.einsum('hji,ji->jhi', A, F / t_list[:, 1:])  
     M_list[:, :, 1:-1, 1, 1] = torch.einsum('hji,ji->jhi', A, 1 / t_list[:, 1:]) 
 
-    Mtilde = torch.empty((num_angles, num_lambda, 2, 2), dtype=complex)
-    Mtilde[:, :] = make_2x2_tensor(1, 0, 0, 1, dtype=complex)
+    Mtilde = torch.empty((num_angles, num_lambda, 2, 2), dtype=torch.cfloat)
+    Mtilde[:, :] = make_2x2_tensor(1, 0, 0, 1, dtype=torch.cfloat)
 
     #print('M_list: ', M_list.shape)
     #tictoc.tic()
     
     # contract the M_list matrix along the dimension of the layers, all
+
+    # M = np.copy(Mtilde.numpy())
+    # for i in range(1, num_layers-1):
+    #     M = np.matmul(M, M_list[:,:,i].numpy())
+
     for i in range(1, num_layers-1):
-        Mtilde = torch.einsum('ijkl,ijlm->ijkm', Mtilde, M_list[:,:,i])
+        Mtilde = Mtilde @ M_list[:,:,i]
+    # np.testing.assert_almost_equal(Mtilde.numpy(), M)
+    # for i in range(1, num_layers-1):
+    #     Mtilde = torch.einsum('ijkl,ijlm->ijkm', Mtilde, M_list[:,:,i])
+
 
     # tictoc.toc()
     
     # M_r0 accounts for the first and last stack where the translation coefficients are 1 
     # todo: why compute separately?
-    M_r0 = torch.empty((num_angles, 2, 2), dtype=complex)
-    M_r0[:,0, 0] = 1
+    M_r0 = torch.empty((num_angles, 2, 2), dtype=torch.cfloat)
+    M_r0[:, 0, 0] = 1
     M_r0[:, 0, 1] = r_list[:, 0]
     M_r0[:, 1, 0] = r_list[:, 0]
     M_r0[:, 1, 1] = 1
     M_r0 = torch.einsum('ijk,i->ijk', M_r0, 1/t_list[:,0])
-    
+
+    # M_r0 = torch.tensor(M_r0, dtype=torch.float)
+    # Mtilde = torch.tensor(Mtilde, dtype=torch.float)
     
     Mtilde = torch.einsum('hjk,hikl->hijl', M_r0 , Mtilde)
 
@@ -499,7 +566,7 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     # total reflectivity calculation
     # vw_list[n] = [v_n, w_n]. v_0 and w_0 are undefined because the 0th medium
     # has no left interface.
-    # vw_list = zeros((num_layers, 2), dtype=complex)
+    # vw_list = zeros((num_layers, 2), dtype=torch.cfloat)
     # vw = tensor([[t],[0]])
     # vw_list[-1,:] = torch.transpose(vw)
     # for i in range(num_layers-2, 0, -1):
@@ -510,8 +577,8 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     # Net transmitted and reflected power, as a proportion of the incoming light
     # power.
     R = R_from_r(r)
-
-    T = T_from_t_new(pol, t.T, n_list[0], n_list[-1], th_0, th_list[:, -1]).T
+    T=None
+    # T = T_from_t_new(pol, t.T, n_list[0], n_list[-1], th_0, th_list[:, -1]).T
     
     # power_entering = power_entering_from_r(pol, r, n_list[0], th_0)
     power_entering = 'not calculated'
