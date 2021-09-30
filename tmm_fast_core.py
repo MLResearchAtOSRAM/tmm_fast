@@ -232,14 +232,13 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     
     A = exp(1j*delta[:,:, 1:-1]) 
     F = r_list[:, :, 1:]
-
     
-#     # A ist the propagation term for matrix optic and holds the appropriate accumulated phase for the thickness
-#     # of each layer
-#     A = exp(1j*delta[:,:, 1:-1])   # [lambda, theta, n], n without the first and last layer as they function as injection 
-#     # and measurement layer
-#     F = r_list[:, 1:]
-#     #print('F: ', F.shape)
+    # # A ist the propagation term for matrix optic and holds the appropriate accumulated phase for the thickness
+    # # of each layer
+    # A = exp(1j*delta[:,:, 1:-1])   # [lambda, theta, n], n without the first and last layer as they function as injection 
+    # # and measurement layer
+    # F = r_list[:, 1:]
+    # #print('F: ', F.shape)
     
     # M_list holds the transmission and reflection matrices from matrix-optics
     
@@ -443,13 +442,17 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     Mtilde = np.empty((num_angles, num_lambda, 2, 2), dtype=complex)
     Mtilde[:, :] = make_2x2_array(1, 0, 0, 1, dtype=complex)
 
-    #print('M_list: ', M_list.shape)
-    #tictoc.tic()
+    M = np.copy(Mtilde)
+    for i in range(1, num_layers-1):
+        M = np.matmul(M, M_list[:,:,i])
     
+
+
     # contract the M_list matrix along the dimension of the layers, all
     for i in range(1, num_layers-1):
         Mtilde = np.einsum('ijkl,ijlm->ijkm', Mtilde, M_list[:,:,i])
 
+    np.testing.assert_almost_equal(M, Mtilde)
     # tictoc.toc()
     
     # M_r0 accounts for the first and last stack where the translation coefficients are 1 
@@ -498,4 +501,33 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
             'pol': pol, 'n_list': n_list, 'd_list': d_list, 'th_0': th_0,
             'lam_vac':lam_vac}
 
+
+
+
+if __name__ == '__main__':
+    import tmm_fast_core as tmmc
+    import matplotlib.pyplot as plt
+    np.random.seed(111)
+
+    N_layers = 12
+    N_lambda = 100
+    N_angles = 90
+    # stack_layers = np.random.uniform(20, 150, n_layers)*1e-9
+    stack_layers = np.array([60]*N_layers)*1e-9
+    stack_layers[0] = stack_layers[-1] = np.inf
+    optical_index = np.random.uniform(1.2, 5, N_layers) # + np.random.uniform(0.5, 1, n_layers)*0j
+    optical_index = np.array([2,1]*6)
+    # optical_index = np.sort(optical_index)
+    optical_index[-1] = 1
+
+    
+    #stack_layers[0] = stack_layers[-1] = np.inf
+    wavelength = np.linspace(500, 900, N_lambda)*1e-9
+    theta = np.deg2rad(np.linspace(0, 80, N_angles))
+
+    rest = (tmmc.coh_tmm_fast('s', optical_index[::-1], stack_layers, theta, wavelength)['R'] + 
+            tmmc.coh_tmm_fast('p', optical_index[::-1], stack_layers, theta, wavelength)['R'])/2
+
+    plt.plot(wavelength, rest[0])
+    plt.show()
 

@@ -591,3 +591,92 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
             'lam_vac':lam_vac}
 
 
+
+
+if __name__ == '__main__':
+    import sys
+    from numpy.core.fromnumeric import reshape
+    from numpy.lib.function_base import gradient
+
+    from numpy.testing._private.utils import requires_memory
+    # sys.path.append("N:/Resources/T_Mesh/40_Userdata/Luce_Alexander/workspace/")
+    sys.path.append("N:/Resources/T_Mesh/40_Userdata/Luce_Alexander/workspace/tmm_fast_osram/tmm_fast")
+
+    # import tmm_fast_torch as tmmt
+    # import tmm_fast_core as tmmc
+    from plotting_helper import plot_stacks
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import torch
+    from pytictoc import TicToc
+
+    from scipy.optimize import minimize
+
+    tt = TicToc()
+
+
+    def merit_function(d, n, wl, th):
+        d = torch.tensor(d, requires_grad=True)
+        mse = torch.nn.MSELoss()
+        rest = tmmt.coh_tmm_fast('s', n[::-1], d, th, wl)['R']
+        target = torch.ones_like(rest[0])
+        target[:len(target)//2] = 0
+        error = mse(rest[0], target)
+        error.backward()
+        gradients = d.grad * 1e-6 * 1e-12
+        d = d.detach()
+        return error.detach(), gradients
+
+    n_layers = 12
+    stack_layers = np.random.uniform(20, 250, n_layers)*1e-9
+    # stack_layers = np.array([60]*n_layers)*1e-9
+    stack_layers[0] = stack_layers[-1] = 0 # np.inf 
+    optical_index = np.random.uniform(1.2, 3, n_layers) # + np.random.uniform(0.5, 1, n_layers)*0j
+    optical_index[0:24] = np.array([2.3,1.5]*6)
+    # optical_index = np.sort(optical_index)
+    optical_index[-1] = 1
+    stack_layers2 = stack_layers
+    optical_index2 = optical_index
+
+    N_lambda = 300
+    P = 2
+    #stack_layers[0] = stack_layers[-1] = np.inf
+    wavelength = np.linspace(200, 900, N_lambda)*1e-9
+    theta = np.deg2rad(np.linspace(0, P, 2))
+
+    # rest = tmmc.coh_tmm_fast_disp('s', optical_index[::-1], stack_layers, theta, wavelength)['R']
+    # stack_layers = torch.tensor(stack_layers, requires_grad=True)
+    # tt.tic()
+    # rest = tmmt.coh_tmm_fast('s', optical_index[::-1], stack_layers, theta, wavelength)['R']
+    # tt.toc()
+
+    # tt.tic()
+    # tmmc.coh_tmm_fast('s', optical_index2[::-1], stack_layers2, theta, wavelength)['R']
+    # tt.toc()
+    bnds = np.array([(-1,1)] + [(1e-7, 1e-5)]*10 + [(-1,1)])
+
+    res = minimize(merit_function,
+                x0 = stack_layers,
+                args = (optical_index, wavelength, theta),
+                jac=True,
+                method='CG',
+                bounds= bnds,
+                tol = 1e-18,
+                options={'maxiter': 250}
+                )
+
+    print(res.x)
+    print(res)
+
+    wavelength = np.linspace(200, 900, 500)*1e-9
+
+    ref = tmmc.coh_tmm_fast('s', optical_index2[::-1], res.x, theta, wavelength)['R']
+
+    fig, (ax1, ax2) = plt.subplots(1,2, figsize=(8,5), dpi=200)
+    ax1, cmap = plot_stacks(ax1, optical_index,res.x)
+
+    ax2.plot(wavelength, ref[0])
+    target = np.ones_like(ref[0])
+    target[:len(target)//2] = 0
+    ax2.plot(wavelength, target)
+    plt.show()
