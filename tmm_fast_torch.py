@@ -137,7 +137,7 @@ def list_snell(n_list, th_0):
         angles[-1] = pi - angles[-1]
     return angles
 
-def list_snell_new(n_list, th):
+def list_snell_vec(n_list, th):
     """
     return list of angle theta in each layer based on angle th_0 in layer 0,
     using Snell's law. n_list is index of refraction of each layer. Note that
@@ -163,7 +163,7 @@ def list_snell_new(n_list, th):
     return angles
 
 
-def interface_r_new(polarization, n_i, n_f, th_i, th_f):
+def interface_r_vec(polarization, n_i, n_f, th_i, th_f):
     """
     reflection amplitude (from Fresnel equations)
 
@@ -185,7 +185,7 @@ def interface_r_new(polarization, n_i, n_f, th_i, th_f):
     else:
         raise ValueError("Polarization must be 's' or 'p'")
 
-def interface_t_new(polarization, n_i, n_f, th_i, th_f):
+def interface_t_vec(polarization, n_i, n_f, th_i, th_f):
     """
     transmission amplitude (frem Fresnel equations)
 
@@ -214,9 +214,6 @@ def R_from_r(r):
     Calculate reflected power R, starting with reflection amplitude r.
     """
     return abs(r)**2
-
-def matmul_complex(t1,t2):
-    return torch.view_as_complex(torch.stack((t1.real @ t2.real - t1.imag @ t2.imag, t1.real @ t2.imag + t1.imag @ t2.real),dim=2))
 
 
 def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
@@ -317,7 +314,7 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     if n_list.ndim==1:
         n_list = torch.tile(n_list, (num_lambda,1)).T
         
-    th_list = list_snell_new(n_list, th)
+    th_list = list_snell_vec(n_list, th)
 
     theta = 2 * np.pi * torch.einsum('kij,ij->kij', cos(th_list), n_list)   # [theta,d, lambda]
     kz_list = torch.einsum('ijk,k->kij', theta, 1/lam_vac) #[lambda, theta, d]
@@ -335,8 +332,8 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     # t_list and r_list hold the transmission and reflection coefficients from 
     # the Fresnel Equations
     
-    t_list = interface_t_new(pol, n_list[:-1, :], n_list[1:, :], th_list[:, :-1, :], th_list[:, 1:, :])
-    r_list = interface_r_new(pol, n_list[:-1, :], n_list[1:, :], th_list[:, :-1, :], th_list[:, 1:, :])
+    t_list = interface_t_vec(pol, n_list[:-1, :], n_list[1:, :], th_list[:, :-1, :], th_list[:, 1:, :])
+    r_list = interface_r_vec(pol, n_list[:-1, :], n_list[1:, :], th_list[:, :-1, :], th_list[:, 1:, :])
     
     A = exp(1j*delta[:,:, 1:-1]) 
     F = r_list[:, :, 1:]
@@ -396,7 +393,7 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     R = R_from_r(r)
 
     T=None
-    # T = T_from_t_new(pol, t, n_list[0], n_list[-1], th_list[:, 0], th_list[:, -1])
+    # T = T_from_t_vec(pol, t, n_list[0], n_list[-1], th_list[:, 0], th_list[:, -1])
     
     # power_entering = power_entering_from_r(pol, r, n_list[0], th_0)
     power_entering = None
@@ -405,7 +402,7 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
 
 
 
-def T_from_t_new(pol, t, n_i, n_f, th_i, th_f):
+def T_from_t_vec(pol, t, n_i, n_f, th_i, th_f):
     """
     Calculate transmitted power T, starting with transmission amplitude t.
 
@@ -534,7 +531,7 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     for i, th in enumerate(th_0):
         th_list[i] = list_snell(n_list, th)
 
-    # th_list = list_snell_new(n_list, th_0)
+    # th_list = list_snell_vec(n_list, th_0)
     
     # kz is the z-component of (complex) angular wavevector for forward-moving
     # wave. Positive imaginary part means decaying.
@@ -621,7 +618,7 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     # power.
     R = R_from_r(r)
     T=None
-    # T = T_from_t_new(pol, t.T, n_list[0], n_list[-1], th_0, th_list[:, -1]).T
+    # T = T_from_vec(pol, t.T, n_list[0], n_list[-1], th_0, th_list[:, -1]).T
     
     # power_entering = power_entering_from_r(pol, r, n_list[0], th_0)
     

@@ -1,5 +1,4 @@
 from tmm import *
-import math
 from numpy.lib.scimath import arcsin
 import numpy as np
 import dask
@@ -9,6 +8,38 @@ def multithread_coh_tmm(pol, n_mat, d_mat, th_0, lam_vac, TorR='R'):
     '''
     Creates many parallel threads to compute coh_tmm_fast in parallel.
     n_mat and d_mat should have the number of stacks to compute along the first direction.
+
+    Parameters
+    ----------
+    pol : Str
+        Polarization of the light, accepts only 's' or 'p'
+    n_mat : Array
+        Numpy Array with complex values which contain the refractive indices 
+        at the wavelengths of interest of all different multilayer thin-films.
+        Note that the first and last layer must be real valued for all thin films.
+        (imag(n_list[:, 0 and -1]) must be 0 for all wavelenghts). 
+        Axis 0 : Number of thin-films
+        Axis 1 : Number of layers
+    d_mat : Array
+        Holds the layer thicknesses of all layers of the multilayer thin-films. 
+        Axis 0 : Number of thin-films
+        Axis 1 : Number of layers
+    th_0 : Array
+        Angles in degree with which the light propagates in the injection region
+    lam_vac : Array
+        Wavelengths at which reflection and transmission are computed
+        For optimization, it can be beneficial to give the wavelengths in µm.
+    TorR : Str
+        Indicates whether Reflectivity or Transmissivity should be returned
+
+    Returns
+    -------
+    output : Array
+        Numpy array which contains all Reflectivities/Transmissivities of all 
+        thin-films
+        Axis 0 : Number of thin-films
+        Axis 1 : Number of angles 
+        Axis 2 : Number of wavelengths 
     
     '''
     n_samples = n_mat.shape[0]
@@ -98,7 +129,7 @@ def list_snell_new(n_list, th):
     return angles
 
 
-def interface_r_new(polarization, n_i, n_f, th_i, th_f):
+def interface_r_vec(polarization, n_i, n_f, th_i, th_f):
     """
     reflection amplitude (from Fresnel equations)
 
@@ -120,7 +151,7 @@ def interface_r_new(polarization, n_i, n_f, th_i, th_f):
     else:
         raise ValueError("Polarization must be 's' or 'p'")
 
-def interface_t_new(polarization, n_i, n_f, th_i, th_f):
+def interface_t_vec(polarization, n_i, n_f, th_i, th_f):
     """
     transmission amplitude (frem Fresnel equations)
 
@@ -227,8 +258,8 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     # t_list and r_list hold the transmission and reflection coefficients from 
     # the Fresnel Equations
     
-    t_list = interface_t_new(pol, n_list[:-1, :], n_list[1:, :], th_list[:, :-1, :], th_list[:, 1:, :])
-    r_list = interface_r_new(pol, n_list[:-1, :], n_list[1:, :], th_list[:, :-1, :], th_list[:, 1:, :])
+    t_list = interface_t_vec(pol, n_list[:-1, :], n_list[1:, :], th_list[:, :-1, :], th_list[:, 1:, :])
+    r_list = interface_r_vec(pol, n_list[:-1, :], n_list[1:, :], th_list[:, :-1, :], th_list[:, 1:, :])
     
     A = exp(1j*delta[:,:, 1:-1]) 
     F = r_list[:, :, 1:]
