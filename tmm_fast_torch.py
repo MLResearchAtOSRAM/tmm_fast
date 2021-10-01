@@ -82,7 +82,7 @@ def is_forward_angle(n, theta):
     See https://arxiv.org/abs/1603.02720 appendix D. If theta is the forward
     angle, then (pi-theta) is the backward angle and vice-versa.
     """
-    n = torch.tensor(n, dtype=torch.cfloat)
+    n = n.clone().detach().to(torch.cfloat) # torch.tensor(n, dtype=torch.cfloat)
     assert n.real * n.imag >= 0, ("For materials with gain, it's ambiguous which "
                                   "beam is incoming vs outgoing. See "
                                   "https://arxiv.org/abs/1603.02720 Appendix C.\n"
@@ -93,7 +93,7 @@ def is_forward_angle(n, theta):
     #                               "n: " + str(n) + "   angle: " + str(theta))
 
     ncostheta = n * cos(theta)
-    ncostheta = torch.tensor(ncostheta, dtype=torch.cfloat)
+    ncostheta = ncostheta.clone().detach().to(torch.cfloat) # torch.tensor(ncostheta, dtype=torch.cfloat)
     if abs(ncostheta.imag) > 100 * EPSILON:
         # Either evanescent decay or lossy medium. Either way, the one that
         # decays is the forward-moving wave
@@ -221,7 +221,41 @@ def matmul_complex(t1,t2):
 
 def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     """
-    Upgrade to the regular coh_tmm method. Does not perform checks and should
+    Computes Reflection and Transmission spectra for multilayer thin-films with 
+    dispersive materials.
+
+    This implementaion uses PyTorch functions and can be used with Pytorch 
+    Autograd. 
+
+    Parameters
+    ----------
+    pol : Str
+        Polarization of the light, accepts only 's' or 'p'
+    n_list : Tensor
+        PyTorch Tensor with complex values which contain the refractive indices 
+        at the wavelengths of interest. Note that the first and last layer must 
+        be real valued (imag(n_list[0 and -1]) must be 0 for all wavelenghts). 
+    d_list : Tensor
+        Holds the layer thicknesses of the individual layers. 
+        For optimization, it can be beneficial to use the thickness in µm since 
+        many optimizers will terminate if the gradients become to small.
+    th : Tensor
+        Angles in degree with which the light propagates in the injection region
+    lam_vac : Tensor
+        Wavelengths at which reflection and transmission are computed
+        For optimization, it can be beneficial to give the wavelengths in µm.
+
+    Returns
+    output : Dict
+        Keys: 
+            'r' : Fresnel coefficients of reflection
+            't' : Fresnel coefficients of transmission
+            'R' : Reflectivity / Reflectance
+            'T' : Transmissivity / Transmittance
+            'power_entering' : TODO
+            'vw_list' : TODO
+
+    Upgrade to the regular coh_tmm from sbyrnes method. Does not perform checks and should
     be cross validated with coh_tmm in case of doubt.
     Main "coherent transfer matrix method" calc. Given parameters of a stack,
     calculates everything you could ever want to know about how light
@@ -306,8 +340,6 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     
     A = exp(1j*delta[:,:, 1:-1]) 
     F = r_list[:, :, 1:]
-
-    
 #     # A ist the propagation term for matrix optic and holds the appropriate accumulated phase for the thickness
 #     # of each layer
 #     A = exp(1j*delta[:,:, 1:-1])   # [lambda, theta, n], n without the first and last layer as they function as injection 
@@ -369,10 +401,8 @@ def coh_tmm_fast_disp(pol, n_list, d_list, th, lam_vac):
     # power_entering = power_entering_from_r(pol, r, n_list[0], th_0)
     power_entering = None
 
-    return {'r': r, 't': t, 'R': R, 'T': T, 'power_entering': power_entering,
-            'vw_list': vw_list, 'kz_list': kz_list, 'th_list': th_list,
-            'pol': pol, 'n_list': n_list, 'd_list': d_list, 'th': th,
-            'lam_vac':lam_vac}
+    return {'r': r, 't': t, 'R': R, 'T': T}
+
 
 
 def T_from_t_new(pol, t, n_i, n_f, th_i, th_f):
@@ -406,6 +436,37 @@ def T_from_t_new(pol, t, n_i, n_f, th_i, th_f):
 
 def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     """
+    Computes Reflection and Transmission spectra for multilayer thin-films with 
+    non-dispersive materials ie. constant refractive index.
+
+    This implementaion uses PyTorch functions and can be used with Pytorch 
+    Autograd. 
+
+    Parameters
+    ----------
+    pol : Str
+        Polarization of the light, accepts only 's' or 'p'
+    n_list : Tensor
+        PyTorch Tensor with complex values which contain the refractive indices 
+        at the wavelengths of interest. Note that the first and last layer must 
+        be real valued (imag(n_list[0 and -1]) must be 0 for all wavelenghts). 
+    d_list : Tensor
+        Holds the layer thicknesses of the individual layers. 
+        For optimization, it can be beneficial to use the thickness in µm since 
+        many optimizers will terminate if the gradients become to small.
+    th : Tensor
+        Angles in degree with which the light propagates in the injection region
+    lam_vac : Tensor
+        Wavelengths at which reflection and transmission are computed
+        For optimization, it can be beneficial to give the wavelengths in µm.
+
+    Returns
+    output : Dict
+        Keys: 
+            'r' : Fresnel coefficients of reflection
+            't' : Fresnel coefficients of transmission
+            'R' : Reflectivity / Reflectance
+            'T' : Transmissivity / Transmittance
     Upgrade to the regular coh_tmm method. Does not perform checks and should
     be cross validated with coh_tmm in case of doubt.
     Main "coherent transfer matrix method" calc. Given parameters of a stack,
@@ -447,9 +508,6 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     * pol, n_list, d_list, th_0, lam_vac--same as input
 
     """
-    # tictoc = TicToc() # uncomment for computing time measurment
-    # tictoc.tic()
-    
     # n_list holds refracitve indices of every layer, beginning with the layer where the light enters the stack
     # d_list holds the thickness of every layer, same order as n_list
     # lam_vac holds the vacuum wavelength of all wavelegths of interest
@@ -472,7 +530,7 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     
     th_list = torch.empty((num_angles, num_layers), dtype=torch.cfloat)
     
-    # todo vectorize list_snell
+    # TODO vectorize list_snell
     for i, th in enumerate(th_0):
         th_list[i] = list_snell(n_list, th)
 
@@ -480,7 +538,6 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     
     # kz is the z-component of (complex) angular wavevector for forward-moving
     # wave. Positive imaginary part means decaying.
-
     theta = 2 * np.pi * torch.einsum('ij,j->ij', cos(th_list), n_list )   
     kz_list = torch.empty((num_lambda, num_angles, num_layers), dtype=torch.cfloat)  # dimensions: [lambda, theta, n]
     kz_list[:] = theta
@@ -496,7 +553,7 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     # t_list and r_list hold the transmission and reflection coefficients from 
     # the Fresnel Equations
     
-    # todo: vectorize interface_t & _r and add unpolarized option for efficient calculation 
+    # TODO: vectorize interface_t & _r and add unpolarized option for efficient calculation 
     t_list = zeros((num_angles, num_layers-1), dtype=torch.cfloat)  
     r_list = zeros((num_angles, num_layers-1), dtype=torch.cfloat)
     
@@ -511,10 +568,8 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     A = exp(1j*delta[:,:, 1:-1])   # [lambda, theta, n], n without the first and last layer as they function as injection 
     # and measurement layer
     F = r_list[:, 1:]
-    #print('F: ', F.shape)
     
-    # M_list holds the transmission and reflection matrices from matrix-optics
-    
+    # M_list holds the transmission and reflection matrices from matrix-optics 
     M_list = torch.zeros((num_angles, num_lambda, num_layers, 2, 2), dtype=torch.cfloat)
     M_list[:, :, 1:-1, 0, 0] = torch.einsum('hji,ji->jhi', 1 / A, 1/t_list[:, 1:] )   
     M_list[:, :, 1:-1, 0, 1] = torch.einsum('hji,ji->jhi', 1 / A, F / t_list[:, 1:]) 
@@ -524,26 +579,12 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     Mtilde = torch.empty((num_angles, num_lambda, 2, 2), dtype=torch.cfloat)
     Mtilde[:, :] = make_2x2_tensor(1, 0, 0, 1, dtype=torch.cfloat)
 
-    #print('M_list: ', M_list.shape)
-    #tictoc.tic()
-    
     # contract the M_list matrix along the dimension of the layers, all
-
-    # M = np.copy(Mtilde.numpy())
-    # for i in range(1, num_layers-1):
-    #     M = np.matmul(M, M_list[:,:,i].numpy())
-
     for i in range(1, num_layers-1):
         Mtilde = Mtilde @ M_list[:,:,i]
-    # np.testing.assert_almost_equal(Mtilde.numpy(), M)
-    # for i in range(1, num_layers-1):
-    #     Mtilde = torch.einsum('ijkl,ijlm->ijkm', Mtilde, M_list[:,:,i])
 
-
-    # tictoc.toc()
-    
     # M_r0 accounts for the first and last stack where the translation coefficients are 1 
-    # todo: why compute separately?
+    # TODO: why compute separately?
     M_r0 = torch.empty((num_angles, 2, 2), dtype=torch.cfloat)
     M_r0[:, 0, 0] = 1
     M_r0[:, 0, 1] = r_list[:, 0]
@@ -556,7 +597,6 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     
     Mtilde = torch.einsum('hjk,hikl->hijl', M_r0 , Mtilde)
 
-    # tictoc.toc()
     # Net complex transmission and reflection amplitudes
     r = Mtilde[:, :, 1,0] / Mtilde[:, :, 0,0]
     
@@ -572,8 +612,11 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     # for i in range(num_layers-2, 0, -1):
     #     vw = torch.dot(M_list[i], vw)
     #     vw_list[i,:] = torch.transpose(vw)
+    # TODO
     vw_list = 'not calculated'
-    
+    power_entering = 'not calculated'
+
+
     # Net transmitted and reflected power, as a proportion of the incoming light
     # power.
     R = R_from_r(r)
@@ -581,29 +624,20 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     # T = T_from_t_new(pol, t.T, n_list[0], n_list[-1], th_0, th_list[:, -1]).T
     
     # power_entering = power_entering_from_r(pol, r, n_list[0], th_0)
-    power_entering = 'not calculated'
-    # print('out')
-    # tictoc.toc()
-    # print('you have reached rock bottom')
-    return {'r': r, 't': t, 'R': R, 'T': T, 'power_entering': power_entering,
-            'vw_list': vw_list, 'kz_list': kz_list, 'th_list': th_list,
-            'pol': pol, 'n_list': n_list, 'd_list': d_list, 'th_0': th_0,
-            'lam_vac':lam_vac}
+    
+    # return {'r': r, 't': t, 'R': R, 'T': T, 'power_entering': power_entering,
+    #         'vw_list': vw_list, 'kz_list': kz_list, 'th_list': th_list,
+    #         'pol': pol, 'n_list': n_list, 'd_list': d_list, 'th_0': th_0,
+    #         'lam_vac':lam_vac}
+    return {'r': r, 't': t, 'R': R, 'T': T}
 
 
 
 
 if __name__ == '__main__':
-    import sys
     from numpy.core.fromnumeric import reshape
     from numpy.lib.function_base import gradient
 
-    from numpy.testing._private.utils import requires_memory
-    # sys.path.append("N:/Resources/T_Mesh/40_Userdata/Luce_Alexander/workspace/")
-    sys.path.append("N:/Resources/T_Mesh/40_Userdata/Luce_Alexander/workspace/tmm_fast_osram/tmm_fast")
-
-    # import tmm_fast_torch as tmmt
-    # import tmm_fast_core as tmmc
     from plotting_helper import plot_stacks
     import numpy as np
     import matplotlib.pyplot as plt
@@ -614,21 +648,24 @@ if __name__ == '__main__':
 
     tt = TicToc()
 
+    def log_score_torch(input):
+        return -0.434 * torch.log(input) - 0.523
+
 
     def merit_function(d, n, wl, th):
         d = torch.tensor(d, requires_grad=True)
         mse = torch.nn.MSELoss()
-        rest = tmmt.coh_tmm_fast('s', n[::-1], d, th, wl)['R']
+        rest = coh_tmm_fast('s', n[::-1], d, th, wl)['R']
         target = torch.ones_like(rest[0])
         target[:len(target)//2] = 0
-        error = mse(rest[0], target)
+        error = -log_score_torch(mse(rest[0], target))
         error.backward()
-        gradients = d.grad * 1e-6 * 1e-12
+        gradients = d.grad #* 1e-3 # * 1e-12
         d = d.detach()
         return error.detach(), gradients
 
     n_layers = 12
-    stack_layers = np.random.uniform(20, 250, n_layers)*1e-9
+    stack_layers = np.random.uniform(20, 250, n_layers)#*1e-9
     # stack_layers = np.array([60]*n_layers)*1e-9
     stack_layers[0] = stack_layers[-1] = 0 # np.inf 
     optical_index = np.random.uniform(1.2, 3, n_layers) # + np.random.uniform(0.5, 1, n_layers)*0j
@@ -641,7 +678,7 @@ if __name__ == '__main__':
     N_lambda = 300
     P = 2
     #stack_layers[0] = stack_layers[-1] = np.inf
-    wavelength = np.linspace(200, 900, N_lambda)*1e-9
+    wavelength = np.linspace(400, 900, N_lambda)#*1e-9
     theta = np.deg2rad(np.linspace(0, P, 2))
 
     # rest = tmmc.coh_tmm_fast_disp('s', optical_index[::-1], stack_layers, theta, wavelength)['R']
@@ -653,24 +690,24 @@ if __name__ == '__main__':
     # tt.tic()
     # tmmc.coh_tmm_fast('s', optical_index2[::-1], stack_layers2, theta, wavelength)['R']
     # tt.toc()
-    bnds = np.array([(-1,1)] + [(1e-7, 1e-5)]*10 + [(-1,1)])
+    bnds = np.array([(-1,1)] + [(5e2, 1e4)]*10 + [(-1,1)])
 
     res = minimize(merit_function,
                 x0 = stack_layers,
                 args = (optical_index, wavelength, theta),
                 jac=True,
-                method='CG',
+                method='BFGS',
                 bounds= bnds,
-                tol = 1e-18,
+                tol = 1e-5,
                 options={'maxiter': 250}
                 )
 
     print(res.x)
     print(res)
 
-    wavelength = np.linspace(200, 900, 500)*1e-9
+    wavelength = np.linspace(400, 900, 500)*1e-9
 
-    ref = tmmc.coh_tmm_fast('s', optical_index2[::-1], res.x, theta, wavelength)['R']
+    ref = coh_tmm_fast('s', optical_index2[::-1], res.x*1e-9, theta, wavelength)['R']
 
     fig, (ax1, ax2) = plt.subplots(1,2, figsize=(8,5), dpi=200)
     ax1, cmap = plot_stacks(ax1, optical_index,res.x)
@@ -680,3 +717,5 @@ if __name__ == '__main__':
     target[:len(target)//2] = 0
     ax2.plot(wavelength, target)
     plt.show()
+
+    a=1
