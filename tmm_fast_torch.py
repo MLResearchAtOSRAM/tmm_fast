@@ -128,7 +128,7 @@ def is_forward_angle(n, theta):
     See https://arxiv.org/abs/1603.02720 appendix D. If theta is the forward
     angle, then (pi-theta) is the backward angle and vice-versa.
     """
-    n = torch.tensor(n, dtype=torch.cfloat)
+    n = n.clone().detach().to(torch.cfloat) # torch.tensor(n, dtype=torch.cfloat)
     assert n.real * n.imag >= 0, ("For materials with gain, it's ambiguous which "
                                   "beam is incoming vs outgoing. See "
                                   "https://arxiv.org/abs/1603.02720 Appendix C.\n"
@@ -139,7 +139,7 @@ def is_forward_angle(n, theta):
     #                               "n: " + str(n) + "   angle: " + str(theta))
 
     ncostheta = n * cos(theta)
-    ncostheta = torch.tensor(ncostheta, dtype=torch.cfloat)
+    ncostheta = ncostheta.clone().detach().to(torch.cfloat) # torch.tensor(ncostheta, dtype=torch.cfloat)
     if abs(ncostheta.imag) > 100 * EPSILON:
         # Either evanescent decay or lossy medium. Either way, the one that
         # decays is the forward-moving wave
@@ -200,7 +200,9 @@ def list_snell(n_list, th_0):
         angles[-1] = pi - angles[-1]
     return angles
 
-def list_snell_vec(n_list, theta_incidence):
+
+def list_snell_vec(n_list, th):
+
     """
 
     Parameters
@@ -346,14 +348,18 @@ def R_from_r(r):
     """
     return abs(r)**2
 
+
 def coh_tmm_fast_disp(pol, n_list, d_list, theta_incidence, lambda_vacuum):
     """
-    Computes coherent Reflection and Transmission for a given multilayer thin-film
+    Computes coherent Reflection and Transmission spectra for a given multilayer thin-film
     over a broad range of wavelengths and angles of incidence. 
     Requires dispersive materials. 
     The injection- and outcoupling layer MUST have a complex refractive 
     index of zero (ie. no light absorption or amplification) since the in- and 
     outgoing light wave become ambiguous. 
+
+    This implementaion uses PyTorch functions and can be used with Pytorch 
+    Autograd. 
     
     The method is based of the initial implementaion of Steven Byrnes.
 
@@ -364,16 +370,21 @@ def coh_tmm_fast_disp(pol, n_list, d_list, theta_incidence, lambda_vacuum):
     n_list : torch tensor 
         refractive indices of the layer, starting with the injection layer
         This method can handle dispersive materials. 
+        Note that the first and last layer must 
+        be real valued (imag(n_list[0 and -1]) must be 0 for all wavelenghts). 
         shape [<number of layers>, <number of wavelength points>]
     d_list : torch tensor
         list of layer thicknesses of all layers, starting with the injection layer
         unit meter, shape [<number of layers>]
+        For optimization, it can be beneficial to use the thickness in µm since 
+        many optimizers will terminate if the gradients become to small.
     theta_incidence : torch tensor
         concidered angles of incidence of the incoming light at the firts interface
         unit radian, shape [<number of concidered angles of incidence>]       
     lambda_vacuum : torch tensor
         concidered wavelengths for the computation
-        unit meter, shape [<number of concidered wavelength points>] 
+        unit meter, shape [<number of concidered wavelength points>]
+        For optimization, it can be beneficial to give the wavelengths in µm. 
 
     Returns
     -------
@@ -474,6 +485,7 @@ def coh_tmm_fast_disp(pol, n_list, d_list, theta_incidence, lambda_vacuum):
     A = exp(1j*delta[:,:, 1:-1]) # [lambda, theta, n], n without the first and last layer as they function as injection 
     # and measurement layer
     F = r_list[:, :, 1:]
+
     
     # M_list holds the transmission and reflection matrices from matrix-optics
     M_list = torch.zeros((num_angles, num_lambda, num_layers, 2, 2), dtype=torch.cfloat)
@@ -510,12 +522,16 @@ def coh_tmm_fast_disp(pol, n_list, d_list, theta_incidence, lambda_vacuum):
     # TODO: Implement Transmission
     T=None
     # T = T_from_t_vec(pol, t, n_list[0], n_list[-1], th_list[:, 0], th_list[:, -1])
-    return {'r': r, 't': t, 'R': R, 'T': T, 'kz_list': kz_list, 'th_list': th_list,
-            'pol': pol, 'n_list': n_list, 'd_list': d_list, 'theta_incidence': theta_incidence,
-            'lambda_vacuum':lambda_vacuum}
+
+    
+    # power_entering = power_entering_from_r(pol, r, n_list[0], th_0)
+    power_entering = None
+
+    return {'r': r, 't': t, 'R': R, 'T': T}
 
 
-def T_from_t_vec(polarization, t, n_i, n_f, th_i, th_f):
+
+def T_from_t_vec(pol, t, n_i, n_f, th_i, th_f):
     """
     Calculate transmitted power T, starting with transmission amplitude t
     from the Fresnel Equations.
@@ -567,12 +583,15 @@ def T_from_t_vec(polarization, t, n_i, n_f, th_i, th_f):
 
 def coh_tmm_fast(pol, n_list, d_list, th_0, lambda_vacuum):
     """
-    Computes coherent Reflection and Transmission for a given multilayer thin-film
+    Computes coherent Reflection and Transmission spectra for a given multilayer thin-film
     over a broad range of wavelengths and angles of incidence. 
     Requires constant refractive index. 
     The injection- and outcoupling layer MUST have a complex refractive 
     index of zero (ie. no light absorption or amplification) since the in- and 
     outgoing light wave become ambiguous. 
+
+    This implementaion uses PyTorch functions and can be used with Pytorch 
+    Autograd. 
     
     The method is based of the initial implementaion of Steven Byrnes.
     
@@ -582,17 +601,21 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lambda_vacuum):
         's' or 'p'
     n_list : torch tensor 
         refractive indices of the layer, starting with the injection layer
-        This method can't handle dispersive materials. 
+        This method can't handle dispersive materials. Note that the first and last 
+        layer must be real valued (imag(n_list[0 and -1]) must be 0 for all wavelenghts).
         shape [<number of layers>]
     d_list : torch tensor
         list of layer thicknesses of all layers, starting with the injection layer
         unit meter, shape [<number of layers>]
+        For optimization, it can be beneficial to use the thickness in µm since 
+        many optimizers will terminate if the gradients become to small.
     th : torch tensor
         concidered angles of incidence of the incoming light at the firts interface
         unit radian, shape [<number of concidered angles of incidence>]       
     lambda_vacuum : torch tensor
         concidered wavelengths for the computation
         unit meter, shape [<number of concidered wavelength points>] 
+        For optimization, it can be beneficial to give the wavelengths in µm.
 
     Returns
     -------
@@ -763,6 +786,9 @@ if __name__ == '__main__':
 
     tt = TicToc()
 
+    def log_score_torch(input):
+        return -0.434 * torch.log(input) - 0.523
+
 
     def merit_function(d, n, wl, th):
         """
@@ -787,14 +813,14 @@ if __name__ == '__main__':
         rest = coh_tmm_fast('s', n[::-1], d, th, wl)['R']
         target = torch.ones_like(rest[0])
         target[:len(target)//2] = 0
-        error = mse(rest[0], target)
+        error = -log_score_torch(mse(rest[0], target))
         error.backward()
-        gradients = d.grad * 1e-6 * 1e-12
+        gradients = d.grad #* 1e-3 # * 1e-12
         d = d.detach()
         return error.detach(), gradients
 
     n_layers = 12
-    stack_layers = np.random.uniform(20, 250, n_layers)*1e-9
+    stack_layers = np.random.uniform(20, 250, n_layers)#*1e-9
     # stack_layers = np.array([60]*n_layers)*1e-9
     stack_layers[0] = stack_layers[-1] = 0 # np.inf 
     optical_index = np.random.uniform(1.2, 3, n_layers) # + np.random.uniform(0.5, 1, n_layers)*0j
@@ -807,7 +833,7 @@ if __name__ == '__main__':
     N_lambda = 300
     P = 2
     #stack_layers[0] = stack_layers[-1] = np.inf
-    wavelength = np.linspace(200, 900, N_lambda)*1e-9
+    wavelength = np.linspace(400, 900, N_lambda)#*1e-9
     theta = np.deg2rad(np.linspace(0, P, 2))
 
     # rest = tmmc.coh_tmm_fast_disp('s', optical_index[::-1], stack_layers, theta, wavelength)['R']
@@ -819,25 +845,25 @@ if __name__ == '__main__':
     # tt.tic()
     # tmmc.coh_tmm_fast('s', optical_index2[::-1], stack_layers2, theta, wavelength)['R']
     # tt.toc()
-    bnds = np.array([(-1,1)] + [(1e-7, 1e-5)]*10 + [(-1,1)])
+    bnds = np.array([(-1,1)] + [(5e2, 1e4)]*10 + [(-1,1)])
 
     print('\nStart optimization...')
     res = minimize(merit_function,
                 x0 = stack_layers,
                 args = (optical_index, wavelength, theta),
                 jac=True,
-                method='L-BFGS-B',
+                method='BFGS',
                 bounds= bnds,
-                tol = 1e-18,
+                tol = 1e-5,
                 options={'maxiter': 250}
                 )
 
     print(res.x)
     print(res)
 
-    wavelength = np.linspace(200, 900, 500)*1e-9
+    wavelength = np.linspace(400, 900, 500)*1e-9
 
-    ref = tmmc.coh_tmm_fast('s', optical_index2[::-1], res.x, theta, wavelength)['R']
+    ref = coh_tmm_fast('s', optical_index2[::-1], res.x*1e-9, theta, wavelength)['R']
 
     fig, (ax1, ax2) = plt.subplots(1,2, figsize=(8,5), dpi=200)
     ax1, cmap = plot_stacks(ax1, optical_index,res.x)
@@ -847,3 +873,5 @@ if __name__ == '__main__':
     target[:len(target)//2] = 0
     ax2.plot(wavelength, target)
     plt.show()
+
+    a=1
