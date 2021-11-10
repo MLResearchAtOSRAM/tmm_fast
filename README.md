@@ -9,7 +9,6 @@ speed-ups of ~100x are possible. The physics behind the transfer matrix method c
 from Steven J. Byrnes.
 
 ![Alt text](./misc/tmm_structure.svg)
-<img src="./misc/tmm_structure.svg">
 
 <!-- GETTING STARTED -->
 ## Getting Started
