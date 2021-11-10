@@ -8,6 +8,9 @@ wavelength and angle of incidence of the incoming light. The package is build on
 speed-ups of ~100x are possible. The physics behind the transfer matrix method can be studied in any textbook on optical devices or in https://arxiv.org/abs/1603.02720
 from Steven J. Byrnes.
 
+![Alt text](./misc/tmm_structure.svg)
+<img src="./misc/tmm_structure.svg">
+
 <!-- GETTING STARTED -->
 ## Getting Started
 
@@ -21,27 +24,27 @@ tmm_fast requires some prerequisits:
 * PyTorch >= 1.9
 * Dask
   ```sh
-  pip install numpy tmm pytorch==1.9.1 dask
+  pip install numpy tmm pytorch>=1.9.1 dask
   ```
 
 ### Installation
 
 1. Clone the repo
    ```sh
-   git clone https://github.com/github_username/repo_name.git
+   git clone https://github.com/MLResearchAtOSRAM/tmm_fast.git
    ```
 
 
 ## tmm_fast_core
 
-The tmm_fast_core 
+tmm_fast_core contains the core functionality of the transfer matrix method, implemented in Numpy. coh_tmm_fast and coh_tmm_fast_disp can be 
+used to compute a multilayer thin film. By using the multithread_coh_tmm method, large amounts of thin-films can be computed in parallel by 
+using Dask
 
 ## tmm_fast_torch
 
-The tmm_fast_torch file 
-
-To complete the package, a dataset generation function using Dask can distribute the computations on all available CPUs to further speed-up
-computation for really large amounts of thin-film devices (>1E5) which might be interesting for machine learning applications. 
+tmm_fast_torch is a reimplemented version of the tmm_fast_core code. It provides the same functionality as the core methods but allows to 
+compute gradients via PyTroch Autograd. In future versions, GPU acceleration and 2nd order gradients could be implemented, too. 
 
 
 
