@@ -30,7 +30,7 @@
      showgrid="false"
      inkscape:zoom="2.0913616"
      inkscape:cx="384.01429"
-     inkscape:cy="240.4667"
+     inkscape:cy="316.97188"
      inkscape:window-x="1911"
      inkscape:window-y="-9"
      inkscape:window-maximized="1"
@@ -1885,19 +1885,19 @@
         <dc:format>image/svg+xml</dc:format>
         <dc:type
            rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
-        <dc:title></dc:title>
+        <dc:title />
       </cc:Work>
     </rdf:RDF>
   </metadata>
   <g
      id="layer1">
     <rect
-       style="fill:#ffffff;fill-opacity:1;stroke:#ffffff;stroke-width:0.529167;stroke-linecap:round;stroke-opacity:0;paint-order:markers fill stroke"
+       style="fill:#ffffff;fill-opacity:1;stroke:#ffffff;stroke-width:0.540099;stroke-linecap:round;stroke-opacity:0;paint-order:markers fill stroke"
        id="rect3559"
-       width="187.74451"
-       height="107.02955"
-       x="14.548935"
-       y="5.1870112" />
+       width="190.64336"
+       height="109.8019"
+       x="14.5544"
+       y="5.1924772" />
     <path
        style="fill:none;stroke:#000000;stroke-width:0.512749;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1;marker-start:url(#marker12287)"
        d="M 153.41365,20.749411 125.62099,11.578978"
