@@ -7,6 +7,7 @@ wavelength and angle of incidence of the incoming light. The package is build on
 (https://github.com/sbyrnes321/tmm) but quite a lot faster. Depending on the number of layers, wavelength range and angular range 
 speed-ups of ~100x are possible. The physics behind the transfer matrix method can be studied in any textbook on optical devices or in https://arxiv.org/abs/1603.02720
 from Steven J. Byrnes.
+More detailed informations about the package and its applications can be found at https://arxiv.org/abs/2111.13667
 
 ![Alt text](./misc/tmm_structure.svg)
 
@@ -46,4 +47,8 @@ tmm_fast_torch is a reimplemented version of the tmm_fast_core code. It provides
 compute gradients via PyTroch Autograd. In future versions, GPU acceleration and 2nd order gradients could be implemented, too. 
 
 
+## Citing
 
+If you use the code from this repository for your projects, please cite:
+# TMM-Fast: A Transfer Matrix Computation Package for Multilayer Thin-Film Optimization
+ https://arxiv.org/abs/2111.13667 in your publications.
