@@ -1,4 +1,4 @@
-from tmm import interface_t, interface_r
+from tmm_fast_core import interface_t, interface_r
 import numpy as np
 import sys
 # from torch._C import dtype
@@ -10,7 +10,7 @@ import torch
 
 def make_2x2_tensor(a, b, c, d, dtype=float):
     """
-    Makes a 2x2 torch array of [[a,b],[c,d]]
+    Creates a 2x2 torch array of [[a,b],[c,d]]
     Same as "torch.array([[a,b],[c,d]], dtype=float)", but ten times faster
 
     Parameters

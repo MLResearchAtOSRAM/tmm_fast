@@ -23,6 +23,9 @@ tmm_fast requires some prerequisits:
 * tmm
 * PyTorch >= 1.9
 * Dask
+* Matplotlib
+* Seaborn 
+* Gym
   ```sh
   pip install numpy tmm pytorch>=1.9.1 dask
   ```
@@ -34,29 +37,25 @@ tmm_fast requires some prerequisits:
    git clone https://github.com/MLResearchAtOSRAM/tmm_fast.git
    ```
 
+In case any dependency is not fullfilled, you can create an environment using gym_multilayerthinfilm.yml which is located in the package folder; dont forget to specify your pyhton environment folder/path there (prefix).<br/>
+In general, there are no weird dependencies aside from numpy, matplotlib, seaborn, dask and gym. The tmm package can be downloaded/installed from here if necessary:<br/>
+pip install git+https://github.com/sbyrnes321/tmm.git 
 
 ## tmm_fast_core
 
 tmm_fast_core contains the core functionality of the transfer matrix method, implemented in Numpy. coh_tmm_fast and coh_tmm_fast_disp can be 
 used to compute a multilayer thin film. By using the multithread_coh_tmm method, large amounts of thin-films can be computed in parallel by 
-using Dask
+using Dask.
 
 ## tmm_fast_torch
 
 tmm_fast_torch is a reimplemented version of the tmm_fast_core code. It provides the same functionality as the core methods but allows to 
 compute gradients via PyTroch Autograd. In future versions, GPU acceleration and 2nd order gradients could be implemented, too. 
 
-
-## Citing
-
-If you use the code from this repository for your projects, please cite:
-# TMM-Fast: A Transfer Matrix Computation Package for Multilayer Thin-Film Optimization
- https://arxiv.org/abs/2111.13667 in your publications.
-
-# gym-multilayerthinfilm
+## gym-multilayerthinfilm
 
 ## Overview
-The proposed OpenAI gym environment utilizes a parallelized transfer-matrix method (TMM) to implement the optimization of multi-layer thin films as parameterized Markov decision processes. An very intuitve example is provided in example.py.
+The proposed OpenAI gym environment utilizes the parallelized transfer-matrix method (TMM-Fast) to implement the optimization of multi-layer thin films as parameterized Markov decision processes. An very intuitve example is provided in example.py.
 Whereas the contained physical methods are well-studied and known since decades, the contribution of this code lies the transfer to an OpenAI gym environment. The intention is to enable AI researchers without optical expertise to solve the corresponding parameterized Markov decision processes. Due to their structure, the solution of such problems is still an active field of research in the AI community.<br/>
 The publication [Parameterized Reinforcement learning for Optical System Optimization](https://iopscience.iop.org/article/10.1088/1361-6463/abfddb) used this environment.
 
@@ -65,10 +64,8 @@ The publication [Parameterized Reinforcement learning for Optical System Optimiz
 pip install git+https://github.com/MLResearchAtOSRAM/gym-multilayerthinfilm.git<br/><br/>
 2.<br/>
 Clone the repository and executing setup.py
+-->
 
-In case any dependency is not fullfilled, you can create an environment using gym_multilayerthinfilm.yml which is located in the package folder; dont forget to specify your pyhton environment folder/path there (prefix).<br/>
-In general, there are no weird dependencies aside from numpy, matplotlib, seaborn, dask and gym. The tmm package can be downloaded/installed from here if necessary:<br/>
-pip install git+https://github.com/sbyrnes321/tmm.git -->
 
 ## Getting started
 To get started you can do the tutorial notebook example.ipynb or just check out the quickstarter.py!
@@ -99,3 +96,9 @@ In general, the comprehensive optimization of multi-layer thin films in regards 
 
 ![image](https://user-images.githubusercontent.com/83709614/127179200-16aaf611-ad17-4082-a47f-d933ba7cbc83.png)<br/> 
 Figure 2: Rendered output of the environment. Reflectivity (left) over angle of incidence and spectrum of a multi-layer thin film (right). Here, the stack features four layers and each layer’s material was chosen from a set of eight alternatives. The reward is computed based on a desired reflectivity, which is one for each angle and wavelength, but not displayed in this figure.
+
+
+## Citing
+
+If you use the code from this repository for your projects, please cite:
+[TMM-Fast: A Transfer Matrix Computation Package for Multilayer Thin-Film Optimization](https://arxiv.org/abs/2111.13667) in your publications.

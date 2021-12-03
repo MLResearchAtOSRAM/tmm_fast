@@ -1,6 +1,11 @@
-from tmm import *
-from numpy.lib.scimath import arcsin
+# from tmm import *
+
 import numpy as np
+from numpy import cos, inf, zeros, array, exp, conj, nan, isnan, pi, sin, seterr
+from numpy.lib.scimath import arcsin
+import sys
+EPSILON = sys.float_info.epsilon # typical floating-point calculation error
+from numpy.lib.scimath import arcsin
 import dask
 
 
@@ -56,6 +61,35 @@ def multithread_coh_tmm(pol, n_mat, d_mat, th_0, lam_vac, TorR='R'):
 
     return np.array(reflectivity_mat)
 
+def make_2x2_array(a, b, c, d, dtype=float):
+    """
+    Creates a 2x2 torch array of [[a,b],[c,d]]
+    Same as "torch.array([[a,b],[c,d]], dtype=float)", but ten times faster
+
+    Parameters
+    ----------
+    a : int
+        upper left entry
+    b : int
+        upper right entry
+    c : int
+        lower left entry
+    d : int
+        lower right entry
+    dtype :
+         (Default value = float)
+
+    Returns
+    -------
+    my_array : torch tensor
+
+    """
+    my_array = np.empty((2,2), dtype=dtype)
+    my_array[0,0] = a
+    my_array[0,1] = b
+    my_array[1,0] = c
+    my_array[1,1] = d
+    return my_array
 
 def is_not_forward_angle(n, theta):
     """
@@ -359,6 +393,23 @@ def T_from_t_new(pol, t, n_i, n_f, th_i, th_f):
     else:
         raise ValueError("Polarization must be 's' or 'p'")
 
+def R_from_r(r):
+    """
+    Calculate reflected power R from the reflection amplitude r
+    of the Fresnel equations.
+
+    Parameters
+    ----------
+    r : array like
+        Fresnel reflection coefficients
+
+    Returns
+    -------
+    R : array like
+        Reflectivity
+    """
+    return abs(r)**2
+
 
 def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
     """
@@ -533,6 +584,120 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lam_vac):
             'lam_vac':lam_vac}
 
 
+def list_snell(n_list, th_0):
+    """
+    Computes Snell's law for a given angle of incidence throughout all layers
+
+    Parameters
+    ----------
+    n_list : torch tensor
+        refractive indices of all layers
+    th_0 : float
+        angle of incidence of the incoming light, 0 means normal incidence
+        unit radian        
+
+    Returns
+    -------
+    angles : torch tensor
+        propagation angle of the light beam in all layers 
+    
+    Notes
+    -----
+        Computes angles of refraction using Snell's law. n_list is index of 
+        refraction of each layer. Note that "angles" may be complex!!
+
+    """
+    # Important that the arcsin here is numpy.lib.scimath.arcsin, not
+    # numpy.arcsin! (They give different results e.g. for arcsin(2).)
+    angles = arcsin(n_list[0]*np.sin(th_0) / n_list)
+    # The first and last entry need to be the forward angle (the intermediate
+    # layers don't matter, see https://arxiv.org/abs/1603.02720 Section 5)
+    if not is_forward_angle(n_list[0], angles[0]):
+        angles[0] = pi - angles[0]
+    if not is_forward_angle(n_list[-1], angles[-1]):
+        angles[-1] = pi - angles[-1]
+    return angles
+
+
+# TODO: replace methods by vectorized methods
+def interface_r(polarization, n_i, n_f, th_i, th_f):
+    """
+    reflection amplitude (from Fresnel equations)
+
+    polarization is either "s" or "p" for polarization
+
+    n_i, n_f are (complex) refractive index for incident and final
+
+    th_i, th_f are (complex) propegation angle for incident and final
+    (in radians, where 0=normal). "th" stands for "theta".
+    """
+    if polarization == 's':
+        return ((n_i * cos(th_i) - n_f * cos(th_f)) /
+                (n_i * cos(th_i) + n_f * cos(th_f)))
+    elif polarization == 'p':
+        return ((n_f * cos(th_i) - n_i * cos(th_f)) /
+                (n_f * cos(th_i) + n_i * cos(th_f)))
+    else:
+        raise ValueError("Polarization must be 's' or 'p'")
+
+def interface_t(polarization, n_i, n_f, th_i, th_f):
+    """
+    transmission amplitude (frem Fresnel equations)
+
+    polarization is either "s" or "p" for polarization
+
+    n_i, n_f are (complex) refractive index for incident and final
+
+    th_i, th_f are (complex) propegation angle for incident and final
+    (in radians, where 0=normal). "th" stands for "theta".
+    """
+    if polarization == 's':
+        return 2 * n_i * cos(th_i) / (n_i * cos(th_i) + n_f * cos(th_f))
+    elif polarization == 'p':
+        return 2 * n_i * cos(th_i) / (n_f * cos(th_i) + n_i * cos(th_f))
+    else:
+        raise ValueError("Polarization must be 's' or 'p'")
+
+def is_forward_angle(n, theta):
+    """
+    if a wave is traveling at angle theta from normal in a medium with index n,
+    calculate whether or not this is the forward-traveling wave (i.e., the one
+    going from front to back of the stack, like the incoming or outgoing waves,
+    but unlike the reflected wave). For real n & theta, the criterion is simply
+    -pi/2 < theta < pi/2, but for complex n & theta, it's more complicated.
+    See https://arxiv.org/abs/1603.02720 appendix D. If theta is the forward
+    angle, then (pi-theta) is the backward angle and vice-versa.
+    """
+    assert n.real * n.imag >= 0, ("For materials with gain, it's ambiguous which "
+                                  "beam is incoming vs outgoing. See "
+                                  "https://arxiv.org/abs/1603.02720 Appendix C.\n"
+                                  "n: " + str(n) + "   angle: " + str(theta))
+    ncostheta = n * cos(theta)
+    if abs(ncostheta.imag) > 100 * EPSILON:
+        # Either evanescent decay or lossy medium. Either way, the one that
+        # decays is the forward-moving wave
+        answer = (ncostheta.imag > 0)
+    else:
+        # Forward is the one with positive Poynting vector
+        # Poynting vector is Re[n cos(theta)] for s-polarization or
+        # Re[n cos(theta*)] for p-polarization, but it turns out they're consistent
+        # so I'll just assume s then check both below
+        answer = (ncostheta.real > 0)
+    # convert from numpy boolean to the normal Python boolean
+    answer = bool(answer)
+    # double-check the answer ... can't be too careful!
+    error_string = ("It's not clear which beam is incoming vs outgoing. Weird"
+                    " index maybe?\n"
+                    "n: " + str(n) + "   angle: " + str(theta))
+    if answer is True:
+        assert ncostheta.imag > -100 * EPSILON, error_string
+        assert ncostheta.real > -100 * EPSILON, error_string
+        assert (n * cos(theta.conjugate())).real > -100 * EPSILON, error_string
+    else:
+        assert ncostheta.imag < 100 * EPSILON, error_string
+        assert ncostheta.real < 100 * EPSILON, error_string
+        assert (n * cos(theta.conjugate())).real < 100 * EPSILON, error_string
+    return answer
 
 
 if __name__ == '__main__':
@@ -543,8 +708,8 @@ if __name__ == '__main__':
     N_layers = 12
     N_lambda = 100
     N_angles = 90
-    # stack_layers = np.random.uniform(20, 150, n_layers)*1e-9
-    stack_layers = np.array([60]*N_layers)*1e-9
+    stack_layers = np.random.uniform(20, 150, N_layers)*1e-9
+    # stack_layers = np.array([60]*N_layers)*1e-9
     stack_layers[0] = stack_layers[-1] = np.inf
     optical_index = np.random.uniform(1.2, 5, N_layers) # + np.random.uniform(0.5, 1, n_layers)*0j
     optical_index = np.array([2,1]*6)
