@@ -520,8 +520,8 @@ def coh_tmm_fast_disp(pol, n_list, d_list, theta_incidence, lambda_vacuum):
     # power.
     R = R_from_r(r)
     # TODO: Implement Transmission
-    T=None
-    # T = T_from_t_vec(pol, t, n_list[0], n_list[-1], th_list[:, 0], th_list[:, -1])
+    # T=None
+    T = T_from_t_vec(pol, t, n_list[0], n_list[-1], th_list[:, 0], th_list[:, -1])
 
     
     # power_entering = power_entering_from_r(pol, r, n_list[0], th_0)
