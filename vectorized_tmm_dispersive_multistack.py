@@ -9,8 +9,13 @@ def coh_vec_tmm_disp_mstack(pol, N, T, Theta, lambda_vacuum, device='cpu', timer
     """
     Parallelized computation of reflection and transmission for coherent light spectra that traverse
     a bunch of multilayer thin-films with dispersive materials.
-    This implementation uses PyTorch functions and can thus be naturally used with Pytorch Autograd.
+    This implementation in PyTorch naturally allows:
+     - GPU accelerated computations
+     - To compute gradients regarding the multilayer thin-film (i.e. N, T) thanks to Pytorch Autograd
+
     However, the input can also be a numpy array format.
+    Although all internal computations are processed via PyTorch, the output data is converted to numpy arrays again.
+    Hence, the use of numpy input may increase computation time due to data type conversions.
 
     Parameters
     ----------
@@ -32,7 +37,8 @@ def coh_vec_tmm_disp_mstack(pol, N, T, Theta, lambda_vacuum, device='cpu', timer
         Vacuum wavelengths for which reflection and transmission are computed given a bunch of thin films.
         It is of shape [W] and holds the wavelengths in nanometer.
     device : Str
-        Computation device, accepts ether 'cuda' or 'cpu'
+        Computation device, accepts ether 'cuda' or 'cpu'; GPU acceleration can lower the computational time especially
+        for computation involving large tensors
     timer: Boolean
         Determines whether to track times for data pushing on CPU or GPU and total computation time; see output
         information for details on how to read out time
@@ -43,6 +49,7 @@ def coh_vec_tmm_disp_mstack(pol, N, T, Theta, lambda_vacuum, device='cpu', timer
             't' : Tensor or array of Fresnel coefficients of transmission for each stack (over angle and wavelength)
             'R' : Tensor or array of Reflectivity / Reflectance for each stack (over angle and wavelength)
             'T' : Tensor or array of Transmissivity / Transmittance for each stack (over angle and wavelength)
+            Each of these tensors or arrays is of shape [S x A x W]
     optional output: list of two floats if timer=True
             first entry holds the pushtime [sec] that is the time required to push the input data on the specified
             device (i.e. cpu oder cuda), the second entry holds the total computation time [sec] (pushtime + tmm)
@@ -85,6 +92,7 @@ def coh_vec_tmm_disp_mstack(pol, N, T, Theta, lambda_vacuum, device='cpu', timer
     if timer:
         import time
         starttime = time.time()
+    datatype = check_datatype(N, T, lambda_vacuum, Theta)
     # check uniform data types (e.g. only np.array or torch.tensor) -> save this type
     N = converter(N, device)
     T = converter(T, device)
@@ -166,7 +174,13 @@ def coh_vec_tmm_disp_mstack(pol, N, T, Theta, lambda_vacuum, device='cpu', timer
     # power.
     R = R_from_r(r)
     T = T_from_t_vec(pol, t, N[:, 0], N[:, -1], SnellThetas[:, :, 0], SnellThetas[:, :, -1])
-    # use saved this type: and restore original data type
+
+    if datatype is np.ndarray:
+        r = numpy_converter(r)
+        t = numpy_converter(t)
+        R = numpy_converter(R)
+        T = numpy_converter(T)
+
     if timer:
         total_time = time.time() - starttime
         return {'r': r, 't': t, 'R': R, 'T': T}, [push_time, total_time]
@@ -355,6 +369,14 @@ def converter(data, device):
             raise ValueError('At least one of the inputs (i.e. N, Theta, ...) is not of type numpy.array or torch.Tensor!')
     data = data.type(torch.cfloat).to(device)
     return data.squeeze()
+
+def numpy_converter(data):
+    data = data.detach().cpu().numpy()
+    return data
+
+def check_datatype(N, T, lambda_vacuum, Theta):
+    assert type(N) == type(T) == type(lambda_vacuum) == type(Theta), ValueError('All inputs (i.e. N, Theta, ...) must be of the same data type, i.e. numpy.array or torch.Tensor!')
+    return type(N)
 
 def check_inputs(N, T, Theta, lambda_vacuum):
     # check the dimensionalities of N:

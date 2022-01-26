@@ -24,6 +24,6 @@ T[:, 0] = np.inf
 T[:, -1] = np.inf
 
 #tmm:
-O = tmm('s', M[0, :, :].squeeze(), T[0, :].squeeze(), theta, wl, device='cpu')
+O = tmm('s', M[0, :, :].squeeze(), T.squeeze(), theta, wl, device='cpu')
 
 print(':)')
