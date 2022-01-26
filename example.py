@@ -14,8 +14,7 @@ for i in range(1, M.shape[1]-1):
         M[:, i, :] *= 1.46
     else:
         M[:, i, :] *= 2.56
-#noiser = np.linspace(1.0, 0.5, (M.shape[2]))
-#M = M[:, :] * noiser
+
 #create t
 max_t = 150 * (10**(-9))
 min_t = 10 * (10**(-9))
@@ -24,6 +23,6 @@ T[:, 0] = np.inf
 T[:, -1] = np.inf
 
 #tmm:
-O = tmm('s', M[0, :, :].squeeze(), T.squeeze(), theta, wl, device='cpu')
+O = tmm('s', M, T, theta, wl, device='cpu')
 
 print(':)')

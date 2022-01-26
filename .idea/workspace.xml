@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="653ce0af-f14e-405f-b55d-d60770b39ef1" name="Default Changelist" comment="">
-      <change beforePath="$PROJECT_DIR$/vectorized_tmm_dispersive_multistack.py" beforeDir="false" afterPath="$PROJECT_DIR$/vectorized_tmm_dispersive_multistack.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/example.py" beforeDir="false" afterPath="$PROJECT_DIR$/example.py" afterDir="false" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
@@ -12,11 +12,11 @@
   </component>
   <component name="FileEditorManager">
     <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
-      <file pinned="false" current-in-tab="true">
+      <file pinned="false" current-in-tab="false">
         <entry file="file://$PROJECT_DIR$/vectorized_tmm_dispersive_multistack.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="272">
-              <caret line="16" column="145" selection-start-line="16" selection-start-column="145" selection-end-line="16" selection-end-column="145" />
+            <state relative-caret-position="119">
+              <caret line="7" column="56" selection-start-line="7" selection-start-column="56" selection-end-line="7" selection-end-column="56" />
               <folding>
                 <element signature="e#0#18#0" expanded="true" />
               </folding>
@@ -24,11 +24,11 @@
           </provider>
         </entry>
       </file>
-      <file pinned="false" current-in-tab="false">
+      <file pinned="false" current-in-tab="true">
         <entry file="file://$PROJECT_DIR$/example.py">
           <provider selected="true" editor-type-id="text-editor">
             <state relative-caret-position="459">
-              <caret line="27" lean-forward="true" selection-start-line="27" selection-end-line="27" />
+              <caret line="27" selection-start-line="27" selection-end-line="27" />
               <folding>
                 <element signature="e#0#18#0" expanded="true" />
               </folding>
@@ -59,8 +59,8 @@
         <option value="$PROJECT_DIR$/__init__.py" />
         <option value="$PROJECT_DIR$/cuda_tester.py" />
         <option value="$PROJECT_DIR$/tester.py" />
-        <option value="$PROJECT_DIR$/example.py" />
         <option value="$PROJECT_DIR$/vectorized_tmm_dispersive_multistack.py" />
+        <option value="$PROJECT_DIR$/example.py" />
       </list>
     </option>
   </component>
@@ -252,7 +252,6 @@
   </component>
   <component name="ToolWindowManager">
     <frame x="1358" y="-8" width="1936" height="1056" extended-state="6" />
-    <editor active="true" />
     <layout>
       <window_info content_ui="combo" id="Project" order="0" visible="true" weight="0.11532386" />
       <window_info id="Structure" order="1" side_tool="true" weight="0.25" />
@@ -280,6 +279,11 @@
           <url>file://$PROJECT_DIR$/pca_datageneration.py</url>
           <line>36</line>
           <option name="timeStamp" value="155" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/example.py</url>
+          <line>27</line>
+          <option name="timeStamp" value="180" />
         </line-breakpoint>
       </breakpoints>
       <default-breakpoints>
@@ -378,20 +382,20 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/example.py">
+    <entry file="file://$PROJECT_DIR$/vectorized_tmm_dispersive_multistack.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="459">
-          <caret line="27" lean-forward="true" selection-start-line="27" selection-end-line="27" />
+        <state relative-caret-position="119">
+          <caret line="7" column="56" selection-start-line="7" selection-start-column="56" selection-end-line="7" selection-end-column="56" />
           <folding>
             <element signature="e#0#18#0" expanded="true" />
           </folding>
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/vectorized_tmm_dispersive_multistack.py">
+    <entry file="file://$PROJECT_DIR$/example.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="272">
-          <caret line="16" column="145" selection-start-line="16" selection-start-column="145" selection-end-line="16" selection-end-column="145" />
+        <state relative-caret-position="459">
+          <caret line="27" selection-start-line="27" selection-end-line="27" />
           <folding>
             <element signature="e#0#18#0" expanded="true" />
           </folding>
