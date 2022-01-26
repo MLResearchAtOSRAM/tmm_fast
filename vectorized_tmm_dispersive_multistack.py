@@ -43,9 +43,9 @@ def coh_vec_tmm_disp_mstack(pol, N, T, Theta, lambda_vacuum, device='cpu', timer
             't' : Tensor or array of Fresnel coefficients of transmission for each stack (over angle and wavelength)
             'R' : Tensor or array of Reflectivity / Reflectance for each stack (over angle and wavelength)
             'T' : Tensor or array of Transmissivity / Transmittance for each stack (over angle and wavelength)
-    optional output: two floats if timer=True
-            first float holds the pushtime [sec] that is the time required to push the input data on the specified
-            device (i.e. cpu oder cuda), the second float holds the total computation time [sec] (pushtime + tmm)
+    optional output: list of two floats if timer=True
+            first entry holds the pushtime [sec] that is the time required to push the input data on the specified
+            device (i.e. cpu oder cuda), the second entry holds the total computation time [sec] (pushtime + tmm)
 
     Remarks and prior work from Byrnes:
     Upgrade to the regular coh_tmm from sbyrnes method. Does not perform checks and should
@@ -85,6 +85,7 @@ def coh_vec_tmm_disp_mstack(pol, N, T, Theta, lambda_vacuum, device='cpu', timer
     if timer:
         import time
         starttime = time.time()
+    # check uniform data types (e.g. only np.array or torch.tensor) -> save this type
     N = converter(N, device)
     T = converter(T, device)
     lambda_vacuum = converter(lambda_vacuum, device)
@@ -165,9 +166,10 @@ def coh_vec_tmm_disp_mstack(pol, N, T, Theta, lambda_vacuum, device='cpu', timer
     # power.
     R = R_from_r(r)
     T = T_from_t_vec(pol, t, N[:, 0], N[:, -1], SnellThetas[:, :, 0], SnellThetas[:, :, -1])
+    # use saved this type: and restore original data type
     if timer:
         total_time = time.time() - starttime
-        return {'r': r, 't': t, 'R': R, 'T': T}, push_time, total_time
+        return {'r': r, 't': t, 'R': R, 'T': T}, [push_time, total_time]
     else:
         return {'r': r, 't': t, 'R': R, 'T': T}
 

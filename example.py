@@ -1,6 +1,5 @@
 import numpy as np
 from vectorized_tmm_dispersive_multistack import coh_vec_tmm_disp_mstack as tmm
-import time
 
 wl = np.linspace(400, 1200, 800) * (10**(-9))
 theta = np.linspace(0, 45, 45) * (np.pi/180)
@@ -25,10 +24,6 @@ T[:, 0] = np.inf
 T[:, -1] = np.inf
 
 #tmm:
-starttime = time.time()
-O = tmm('s', M, T, theta, wl, device='cpu')
-endtime = time.time()
+O = tmm('s', M[0, :, :].squeeze(), T[0, :].squeeze(), theta, wl, device='cpu')
 
-time = endtime - starttime
-print('Time: ' + str(time))
 print(':)')
