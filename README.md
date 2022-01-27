@@ -5,17 +5,17 @@ This package is essentially build on Pytorch and its related functionalities suc
 It naturally allows for:
  - GPU accelerated computations
  - To compute gradients regarding the multilayer thin-film (i.e. N, T) thanks to Pytorch Autograd
+ - Vectorized computations, i.e. using Einstein summation convention
 
 In general, tmm_fast is a lightweight package to speed up the computations of reflection and transmission of optical planar multilayer thin-films by vectorization regarding
-- different multilayer thin-films
-- a set of wavelengths
-- a set of incident angles
+- a set of multilayer thin-films consisting of various layers of particular material and thickness,
+- a set of wavelengths, and
+- a set of incident angles.
  
 ## For old guards: Numpy is fully supported
-However, the input can also be a numpy array format.
-Although all internal computations are processed via PyTorch, the output data is converted to numpy arrays again.
+All of the inputs can also be a numpy array format instead of torch tensors.
+However, all internal computations are processed via PyTorch and thus the output data is converted back to numpy arrays again.
 Hence, the use of numpy input may increase computation time due to data type conversions.
-
 
 ## Benefits and conducted sanity checks, backgrounds
 Depending on the number of thin films an their number of layers as well as the considered wavelengths that irradiate the thin film under particular angles of incident, the computation time can be decreased by 2-3 orders of magnitude.
