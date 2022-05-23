@@ -107,4 +107,4 @@ Figure 3: Rendered output of the environment. Reflectivity (left) over angle of 
 
 # Citing
 If you use the code from this repository for your projects, please cite:
-[TMM-Fast: A Transfer Matrix Computation Package for Multilayer Thin-Film Optimization](https://arxiv.org/abs/2111.13667) in your publications.
+[TMM-Fast: A Transfer Matrix Computation Package for Multilayer Thin-Film Optimization](https://doi.org/10.1364/JOSAA.450928) in your publications.
