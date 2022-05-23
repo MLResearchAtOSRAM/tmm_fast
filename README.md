@@ -7,8 +7,7 @@ wavelength and angle of incidence of the incoming light. The package is build on
 from Steven J. Byrnes.
 More detailed information about the package and its applications can be found in [TMM-Fast: A Transfer Matrix Computation Package for Multilayer Thin-Film Optimization](https://arxiv.org/abs/2111.13667).
 
-![Alt text](./misc/tmm_structure.svg)
-![image]()<br/>
+![overview](https://user-images.githubusercontent.com/83709614/169793015-0e8b214d-b6f2-4da2-9030-fd8a1ed5ef71.svg)<br/>
 Figure 1: Overview about what you can do with this package.
 
 <!-- GETTING STARTED -->
@@ -40,7 +39,7 @@ In case any dependency is not fulfilled, you can create an environment using gym
 In general, there are no weird dependencies aside from numpy, matplotlib, seaborn, dask and gym. The tmm package can be downloaded/installed from here if necessary:<br/>
 pip install git+https://github.com/sbyrnes321/tmm.git 
 
-## unified functionality of tmm_fast: Sponge PyTorch functionality for free
+## Unified functionality of tmm_fast: Sponge PyTorch functionality for free
 Parallelized computation of reflection and transmission for coherent light spectra that traverse
 a bunch of multilayer thin-films with dispersive materials.
 This package is essentially build on Pytorch and its related functionalities such as GPU accelerations and Autograd.
@@ -89,13 +88,13 @@ Figure 2: Principal idea of an OpenAI gym environment. The agent takes an action
 The environment can include<br/> 
 •	cladding of the multi-layer thin film (e.g. substrate and ambient materials),<br/>
 •	dispersive and dissipative materials,<br/>
-•	spectral and angular optical behavior of multi-layer thin films (See figure 2),<br/>
+•	spectral and angular optical behavior of multi-layer thin films (See figure 3),<br/>
 •	… and many more.<br/>
 
 The environment class allows to <br/>
 •	conduct so-called parameterized actions (See publication) that define a multi-layer thin film,<br/>
 •	evaluate the generated thin film given a desired optical response, and<br/>
-•	render the results (See figure 2). <br/>
+•	render the results (See figure 3). <br/>
 
 In general, the comprehensive optimization of multi-layer thin films in regards of optical response encompasses <br/>
 •	the number of layers (integer),<br/>
