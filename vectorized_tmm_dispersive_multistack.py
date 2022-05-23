@@ -98,17 +98,22 @@ def coh_vec_tmm_disp_mstack(pol, N, T, Theta, lambda_vacuum, device='cpu', timer
     T = converter(T, device)
     lambda_vacuum = converter(lambda_vacuum, device)
     Theta = converter(Theta, device)
+    squeezed_N = False
+    squeezed_T = False
     if N.ndim < 3:
+        squeezed_N = True
         N = N.unsqueeze(0)
     if T.ndim < 2:
+        squeezed_T = True
         T = T.unsqueeze(0)
+    assert squeezed_N == squeezed_T, 'N and T are not of same shape, as they are of dimensions ' + str(N.ndim) + ' and ' + str(T.ndim)
     if timer:
         push_time = time.time() - starttime
     num_layers = T.shape[1]
     num_stacks = T.shape[0]
     num_angles = Theta.shape[0]
     num_wavelengths = lambda_vacuum.shape[0]
-    check_inputs(N, T, Theta, lambda_vacuum)
+    check_inputs(N, T, lambda_vacuum, Theta)
 
     # if a constant refractive index is used (no dispersion) extend the tensor
     if N.ndim == 2:
@@ -174,6 +179,12 @@ def coh_vec_tmm_disp_mstack(pol, N, T, Theta, lambda_vacuum, device='cpu', timer
     # power.
     R = R_from_r(r)
     T = T_from_t_vec(pol, t, N[:, 0], N[:, -1], SnellThetas[:, :, 0], SnellThetas[:, :, -1])
+
+    if squeezed_T and r.shape[0] == 1:
+        r = torch.reshape(r, (r.shape[1], r.shape[2]))
+        R = torch.reshape(R, (R.shape[1], R.shape[2]))
+        T = torch.reshape(T, (T.shape[1], T.shape[2]))
+        t = torch.reshape(t, (t.shape[1], t.shape[2]))
 
     if datatype is np.ndarray:
         r = numpy_converter(r)
@@ -378,7 +389,7 @@ def check_datatype(N, T, lambda_vacuum, Theta):
     assert type(N) == type(T) == type(lambda_vacuum) == type(Theta), ValueError('All inputs (i.e. N, Theta, ...) must be of the same data type, i.e. numpy.array or torch.Tensor!')
     return type(N)
 
-def check_inputs(N, T, Theta, lambda_vacuum):
+def check_inputs(N, T, lambda_vacuum, Theta):
     # check the dimensionalities of N:
     assert N.ndim == 3, 'N is not of shape [S x L x W] (3d), as it is of dimension ' + str(N.ndim)
     # check the dimensionalities of T:
