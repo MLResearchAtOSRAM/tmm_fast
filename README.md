@@ -66,24 +66,24 @@ The physics behind the transfer matrix method can be studied in any textbook on 
 - Multilayer optical computations (https://arxiv.org/abs/1603.02720) by Steven J. Byrnes
 - The Fresnel Coefficient of Thin Film Multilayer Using Transfer Matrix Method (https://iopscience.iop.org/article/10.1088/1757-899X/518/3/032026) by Zahraa Hummam Mohammed
 
-## gym-multilayerthinfilm
+# gym-multilayerthinfilm
 
 The proposed OpenAI gym environment utilizes the parallelized transfer-matrix method (TMM-Fast) to implement the optimization of multi-layer thin films as parameterized Markov decision processes. An very intuitive example is provided in example.py.
 Whereas the contained physical methods are well-studied and known since decades, the contribution of this code lies the transfer to an OpenAI gym environment. The intention is to enable AI researchers without optical expertise to solve the corresponding parameterized Markov decision processes. Due to their structure, the solution of such problems is still an active field of research in the AI community.<br/>
 The publication [Parameterized Reinforcement learning for Optical System Optimization](https://iopscience.iop.org/article/10.1088/1361-6463/abfddb) used this environment.
 
 
-### Getting started
+## Getting started
 To get started you can do the example py-files for tmm (example_tmm.py) or the gym environment (example_gym.py)!
 
-### Multi-layer thin films meet parameterized reinforcement learning
+## Multi-layer thin films meet parameterized reinforcement learning
 Reinforcement learning is an area of machine learning concerned with how intelligent agents ought to take actions in an environment in order to maximize the notion of reward. The code to be published implements such an environment for the optimization of multi-layer thin films.
 In principle, the proposed code allows to execute actions taken by an agent. These actions determine which material and with which thickness to stack next, thereby consecutively forming a multi-layer thin film as illustrated in Figure 1. Such a multilayer thin-film exhibits optical characteristics. By comparison between the actual and user-defined desired characteristics, a notion of numeric reward is computed based on which the agent learns to distinguish between good and bad design choices. Due to its physical and mathematical structure, the optimization of multi-layer thin film remains a challenging and thus still active field of research in the scientific community. As such it gained recent attention in many publications. Therefore, naturally the need for a standardized environment arises to make the corresponding research more trustful, comparable and consistent.
 
 ![image](https://user-images.githubusercontent.com/83709614/127179171-bc7e8fe5-bd83-4125-a84f-12a9e16c3150.png)<br/> 
 Figure 2: Principal idea of an OpenAI gym environment. The agent takes an action that specifies the material and thickness of the layer to stack next. The environment implements the multi-layer thin film generation as consecutive conduction of actions and assigns a reward to a proposed multi-layer thin film based on how close the actual (solid orange line) fulfils a desired (dashed orange line) characteristic. The made experience is used to adapt the taken actions made in order to increase the reward and thus generate more and more sophisticated multi-layer thin films.
 
-# Description of key features
+### Description of key features
 The environment can include<br/> 
 •	cladding of the multi-layer thin film (e.g. substrate and ambient materials),<br/>
 •	dispersive and dissipative materials,<br/>
@@ -105,9 +105,6 @@ Figure 3: Rendered output of the environment. Reflectivity (left) over angle of 
 
 
 # Citing
-If you use the code from this repository for your projects, please cite:
-<<<<<<< HEAD
-[TMM-Fast: A Transfer Matrix Computation Package for Multilayer Thin-Film Optimization](https://doi.org/10.1364/JOSAA.450928) in your publications.
-=======
-[TMM-Fast: A Transfer Matrix Computation Package for Multilayer Thin-Film Optimization](https://doi.org/10.1364/JOSAA.450928) in your publications.
->>>>>>> 63f79424f2711ab7bc8bfa2aba2f420040f46fbe
+If you use the code from this repository for your projects, please cite <br/>
+[TMM-Fast: A Transfer Matrix Computation Package for Multilayer Thin-Film Optimization](https://doi.org/10.1364/JOSAA.450928) or/and<br/>
+[Parameterized reinforcement learning for optical system optimization](https://iopscience.iop.org/article/10.1088/1361-6463/abfddb) in your publications.
