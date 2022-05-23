@@ -1,4 +1,4 @@
-name: mltf
+name: environment
 channels:
   - pytorch
   - conda-forge
@@ -142,4 +142,4 @@ dependencies:
   - zstd=1.4.9=h19a0ad4_0
   - pip:
     - tmm==0.1.8
-prefix: C:\Users\Username\AppData\Local\Continuum\anaconda3\envs\mltf
+prefix: C:\Users\Username\AppData\Local\Continuum\anaconda3\envs\environment
