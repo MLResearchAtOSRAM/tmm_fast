@@ -2,13 +2,13 @@ import random
 import numpy as np
 import gym
 from gym import spaces
-import tmm_fast_core as tmm
+from vectorized_tmm_dispersive_multistack import coh_vec_tmm_disp_mstack as tmm
 import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib
 
 class MultiLayerThinFilm(gym.Env):
-    def __init__(self, N, maximum_layers, target, weights=None, normalization=True, sparse_reward=True, substrate=None, ambient=None, max_thickness=250e-9, min_thickness=15e-9, work_path=''):
+    def __init__(self, N, maximum_layers, target, weights=None, normalization=True, sparse_reward=True, substrate=None, ambient=None, relative_reward=True, max_thickness=150e-9, min_thickness=10e-9, work_path=''):
         """
         Initialize a new environment for multi-layer thin-film (MLTF) optimization.
         Each layer is determined by its (dispersive) refractive index and a thickness.
@@ -26,10 +26,11 @@ class MultiLayerThinFilm(gym.Env):
             maximum_layers:     integer
                 maximum_layers defines the maximum number of layers to stack
             target:             dictionary
-                with keys 'target', 'direction', 'spectrum'
+                with keys 'target', 'direction', 'spectrum' and 'mode'
                 target['direction'] holds the angles [deg, °] under consideration and is of shape D
                 target['spectrum'] holds the spectrum [m] under consideration and is of shape S
                 target['target'] holds the pixel-wise target reflectivity of a MLTF and is of shape [D x S]
+                target['mode'] states whether to use reflectivity' or 'transmittivity'
             weights:            np.array of same shape [D x S]
                 This array allows to steer the pixels relative influence on the optimization/reward
             normalization:      Boolean
@@ -46,6 +47,10 @@ class MultiLayerThinFilm(gym.Env):
                 ambient['n'] which is of shape np.array of shape [Am x S] . Am is the number of materials that form
                 the ambient. ambient['d'] is of shape Am and holds the corresponding thicknesses of each layer.
                 If ambient is None (default) it is set to vacuum of infinite thickness.
+            relative_reward:    Boolean
+                Impact only if sparse_reward is False. Determines whether the provided reward signal for a stack is
+                computed independently (False) or as difference between two subsequent rewards (True), i.e. improvements
+                achieved by an action are measured by the reward in the latter case.
             max_thickness:      float
                 Determines the maximum layer thickness in meter.
             min_thickness:      float
@@ -109,6 +114,8 @@ class MultiLayerThinFilm(gym.Env):
         self.number_of_materials = N.shape[0]
         self.simulation = np.nan * np.zeros_like(self.target)
         self.reward = None
+        self.old_reward = None
+        self.relative_reward = relative_reward
         self._reward_track = []
         self.layers = []
         self._initial_nmb_layers = 0
@@ -119,10 +126,13 @@ class MultiLayerThinFilm(gym.Env):
         self.axs = None
         # OpenAI gym related settings:
         # action space:
-        self.action_space = spaces.Tuple((spaces.Discrete(self.number_of_materials + 1),
-                                          spaces.Box(low=0, high=1, shape=(1,))))
+        space_list = [spaces.Discrete(self.number_of_materials + 1)]
+        for space in range(self.number_of_materials + 1):
+            space_list.append(spaces.Box(low=0, high=1, shape=(1,)))
+        self.action_space = spaces.Tuple(space_list)
+        self.action_space.spaces[0].shape = (1, )
         # simulation state space:
-        self.observation_space = spaces.Box(low=0, high=1, shape=(self.target.shape[0],), dtype=np.int)
+        self.observation_space = spaces.Box(low=0, high=1, shape=((self.number_of_materials + 1)*maximum_layers, ), dtype=np.float)
         if weights is None:
             self.weights = np.ones_like(self.target)
         else:
@@ -142,7 +152,6 @@ class MultiLayerThinFilm(gym.Env):
         else:
             self.n_substrate = np.ones((1, self.wl.shape[0]))
             self.d_substrate = np.array([np.inf]).squeeze()
-            print('--- substrate is set to vacuum of infinite thickness ---')
         if ambient is not None:
             self.n_ambient = ambient['n']
             self.d_ambient = ambient['d']
@@ -182,8 +191,10 @@ class MultiLayerThinFilm(gym.Env):
                 List of np.arrays of shape [1 x S] that holds the refractive indicies of the stacked layers
             self.d:                  list
                 List of floats that determine the thicknesses of each stacked layer.
-            self.reward:             float
-                rates the current stack based on its fullfillment of the target characteristics
+            one_hot_status:                  np.array of shape [Maximum number of layers L times number of available materials M]
+                Each M-th partition (of L partitions) one-hot encodes a normalized layer thickness and the layer material. In total, this vector encodes the entire stack.
+            handback_reward:             float
+                rates the current stack based on its fullfillment of the target characteristics; can be relative or absolute
             done:                    Boolean
                 done-flag that determines whether to end stacking or not.
             []:                      Empty list
@@ -191,10 +202,11 @@ class MultiLayerThinFilm(gym.Env):
                 """
 
         done = False
-        if action[0] == 0 or self.steps_made == self.maximum_layers:
+        self.old_reward = self.reward
+        if action[0] == 0 or len(self.layers) >= self.maximum_layers:
             done = True
         else:
-            self.layers.append(action[0])
+            self.layers.append(int(action[0]))
             n_layer = self.N[int(action[0] - 1), :].reshape(1, -1)
             d_layer = (self.max_thickness - self.min_thickness) * action[1] + self.min_thickness
             self.n.append(n_layer)
@@ -206,7 +218,33 @@ class MultiLayerThinFilm(gym.Env):
             self.reward, mse = self.reward_func(self.simulation, self.target, self.weights, self.baseline_mse, self.normalization)
             if done:
                 self._reward_track.append(mse)  # track reward to compute baseline
-        return [self.simulation, self.n, self.d], self.reward, done, []
+        if np.all(np.isnan(self.simulation)):
+            print('All simulated values in TMM are NaN!')
+        one_hot_status = self.one_hot_layer_status()
+        if self.relative_reward and not self.sparse_reward and self.old_reward is not None and self.reward is not None:
+            relative_reward = self.reward - self.old_reward
+            handback_reward = relative_reward
+        else:
+            handback_reward = self.reward
+        return [self.simulation, self.n, self.d, one_hot_status], handback_reward, done, []
+
+    def one_hot_layer_status(self):
+        one_hot_vectors = []
+        for layer in range(self.maximum_layers):
+            one_hot_vector = np.zeros((self.number_of_materials + 1))
+            if layer < len(self.layers):
+                one_hot_vector[int(self.layers[layer])] = 1* self.normalize_thickness(self.d[layer])
+            one_hot_vectors.append(one_hot_vector)
+        one_hot_vectors = np.hstack(one_hot_vectors)
+        return one_hot_vectors
+
+    def denormalize_thickness(self, t):
+        t = (self.max_thickness - self.min_thickness) * t + self.min_thickness
+        return t
+
+    def normalize_thickness(self, t):
+        t = (t - self.min_thickness) / (self.max_thickness - self.min_thickness)
+        return t
 
     def reset(self):
         """
@@ -234,9 +272,9 @@ class MultiLayerThinFilm(gym.Env):
         if self._initial_nmb_layers > 0:
             num_layers = random.randint(1, self._initial_nmb_layers - 1)
             for _ in range(num_layers):
-                rnd_material_idx = random.randint(0, self.number_of_materials)
+                rnd_material_idx = random.randint(0, self.number_of_materials-1)
                 rnd_material_d = random.uniform(0, 1)
-                self.layers.append(rnd_material_idx)
+                self.layers.append(rnd_material_idx+1)
                 n_layer = self.N[rnd_material_idx].reshape(1, -1)
                 d_layer = (self.max_thickness - self.min_thickness) * rnd_material_d + self.min_thickness
                 self.n.append(n_layer)
@@ -247,9 +285,10 @@ class MultiLayerThinFilm(gym.Env):
         self.reward = 0
         if not self.sparse_reward:
             self.reward, _ = self.reward_func(self.simulation, self.target, self.weights, self.baseline_mse, self.normalization)
-        return [self.simulation, self.n, self.d], self.reward, [], []
+        one_hot_status = self.one_hot_layer_status()
+        return [self.simulation, self.n, self.d, one_hot_status], self.reward, [], []
 
-    def render(self, conduct_simulation=True):
+    def render(self, conduct_simulation=True, scale=False):
         """
             This method renders the current multi-layer thin film and associated optical response
                     Args:
@@ -281,6 +320,12 @@ class MultiLayerThinFilm(gym.Env):
             cladded_n, cladded_d = self.stack_layers()
             self.simulation = self.simulate(cladded_n, cladded_d)
         self.reward, _ = self.reward_func(self.simulation, self.target, self.weights, self.baseline_mse, self.normalization)
+        if scale:
+            min_val = np.min(self.simulation)
+            max_val = np.max(self.simulation)
+        else:
+            min_val = 0
+            max_val = 1
         # drawing:
         assert self.wl.shape[0] > 1 or self.angle.shape[0] > 1, 'No rendering for single wavelenght and single direction!'
         if self.angle.shape[0] == 1:
@@ -309,7 +354,7 @@ class MultiLayerThinFilm(gym.Env):
             xticks = np.linspace(0, self.target.shape[1], 10, dtype=int)
             xtickslabels = np.linspace(np.min(self.wl*10**9), np.max(self.wl*10**9), 10, dtype=int)
             colormap = None  # 'twilight'
-            g = sns.heatmap(self.simulation, vmin=np.min(self.simulation), vmax=np.max(self.simulation), ax=self.axs[0], xticklabels=xtickslabels, yticklabels=ytickslabels,
+            g = sns.heatmap(self.simulation, vmin=min_val, vmax=max_val, ax=self.axs[0], xticklabels=xtickslabels, yticklabels=ytickslabels,
                             cmap=colormap, cbar=cbar)
             g.set_xticks(xticks)
             g.set_yticks(yticks)
@@ -317,7 +362,7 @@ class MultiLayerThinFilm(gym.Env):
             g.set_xlabel('Wavelength [nm]')
             g.set_xticklabels(g.get_xticklabels(), rotation=45)
             g.set_yticklabels(g.get_yticklabels(), rotation=0)
-            g.set_title(self.mode + '\nReward = ' + str(np.round(self.reward, 4)))
+            g.set_title('Reflectivity\nReward = ' + str(np.round(self.reward, 4)))
 
         # plot stack:
         plt.sca(self.axs[1])
@@ -332,7 +377,7 @@ class MultiLayerThinFilm(gym.Env):
         ind = np.array([1])
         width = 0.25
         for layer, nidx in enumerate(self.layers):
-            plt.bar(ind[0], self.d[layer], width, bottom=np.sum(self.d[:layer]), color=colors[nidx-1])
+            plt.bar(ind[0], self.d[layer], width, bottom=np.sum(self.d[:layer]), color=colors[int(nidx)-1])
         num_materials = self.num_layers
         plt.xticks(ind,
                    ('Multi-layer thin film\n' + str(num_materials) + ' layers',))
@@ -437,8 +482,8 @@ class MultiLayerThinFilm(gym.Env):
             r:                     np.array of shape [D x S]
                 r holds the pixel-wise reflectivity values for the directions and wavelengths under consideration
             """
-        result_dicts = tmm.coh_tmm_fast_disp('s', n, d, (np.pi/180)*self.angle, self.wl)
-        result_dictp = tmm.coh_tmm_fast_disp('p', n, d, (np.pi/180)*self.angle, self.wl)
+        result_dicts = tmm('s', n, d, (np.pi/180)*self.angle, self.wl)
+        result_dictp = tmm('p', n, d, (np.pi/180)*self.angle, self.wl)
         if self.mode == 'reflectivity':
             rs = result_dicts['R']
             rp = result_dictp['R']
@@ -450,8 +495,11 @@ class MultiLayerThinFilm(gym.Env):
             t = (ts + tp) / 2
             return t
 
-    def create_action(self, mat_number, thickness):
-        normalized_thickness = (thickness - self.min_thickness) / (self.max_thickness - self.min_thickness)
+    def create_action(self, mat_number, thickness, is_normalized=True):
+        if not is_normalized:
+            normalized_thickness = (thickness - self.min_thickness) / (self.max_thickness - self.min_thickness)
+        else:
+            normalized_thickness = thickness
         action = tuple((mat_number, np.array([normalized_thickness])))
         return action
 
@@ -462,7 +510,7 @@ class MultiLayerThinFilm(gym.Env):
             t = np.empty()
         n = []
         for material in material_list:
-            n.append(self.N[material-1, :].reshape(1, -1))
+            n.append(self.N[material-1, :])
         n = np.vstack((n))
         dictionary = {'n': n, 'd': t}
         return n, t, dictionary
@@ -510,7 +558,7 @@ class MultiLayerThinFilm(gym.Env):
         """
         Setter for the private property that specifies an initial number of layers during environment reset
             """
-        if nmb_of_initial_layers < self.maximum_layers:
+        if nmb_of_initial_layers > self.maximum_layers:
             raise ValueError("Initial number of layers already exceeds total number of allowed layers!")
         self._initial_nmb_layers = nmb_of_initial_layers
 
@@ -520,9 +568,9 @@ class MultiLayerThinFilm(gym.Env):
         Returns the baseline mse for reward computation/transformation (See publication for details)
             """
         if len(self._reward_track) == 0:
-            return 1.0
+            return 0.4
         else:
-            return np.mean(self._reward_track)
+            return 0.4  # np.mean(self._reward_track)
 
     @property
     def num_layers(self):
@@ -543,7 +591,7 @@ class MultiLayerThinFilm(gym.Env):
     @staticmethod
     def reward_func(reflectivity, target, weights=None, baseline_mse=1.0, normalization=False, low_reward=0.01, high_reward=1.0):
         """
-        An unconstrained reward computation based on the observed reflectivity and the given target. You can write here whatever you prefer:
+        An unconstrained reward computation based on the observed reflectivity and the given target.
             """
         if weights is None:
             weights = np.ones_like(target)
@@ -560,5 +608,5 @@ class MultiLayerThinFilm(gym.Env):
             b = np.log(lowest_measureable_reward / highest_measureable_reward) / baseline_mse
             reward = a * np.exp(b * baseline_error)
         else:
-            reward = - baseline_error
+            reward = np.exp(-baseline_error)
         return reward, baseline_error
