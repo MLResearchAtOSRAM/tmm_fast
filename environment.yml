@@ -41,4 +41,4 @@ dependencies:
     - typing-extensions==4.4.0
     - zipp==3.10.0
     - git+https://github.com/MLResearchAtOSRAM/tmm_fast.git
-prefix: C:\Users\A.Luce\Anaconda3\envs\tmmfast
+
