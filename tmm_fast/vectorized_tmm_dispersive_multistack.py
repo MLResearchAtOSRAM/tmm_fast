@@ -378,8 +378,7 @@ def converter(data, device):
             data = torch.from_numpy(data.copy())
         else:
             raise ValueError('At least one of the inputs (i.e. N, Theta, ...) is not of type numpy.array or torch.Tensor!')
-    data = data.type(torch.cfloat).to(device)
-    return data.squeeze()
+    return data.type(torch.cfloat).to(device)
 
 def numpy_converter(data):
     data = data.detach().cpu().numpy()
