@@ -39,9 +39,9 @@ To get a local copy up and running follow these steps:
     * Matplotlib
     * Seaborn 
     * Gym
-      ```sh
-      pip install numpy pytorch>=1.9.1 dask matplotlib seaborn gym
-  ```
+   ```sh
+   pip install numpy pytorch>=1.9.1 dask matplotlib seaborn gym
+   ```
 
 In case any dependency is not fulfilled, you can create an environment using gym_multilayerthinfilm.yml which is located in the package folder; don't forget to specify your python environment folder/path there (prefix).<br/>
 In general, there are no weird dependencies aside from numpy, matplotlib, seaborn, dask and gym. The tmm package can be downloaded/installed from here if necessary:<br/>
