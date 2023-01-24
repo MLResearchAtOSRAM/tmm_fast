@@ -2,15 +2,27 @@ import random
 import numpy as np
 import gym
 from gym import spaces
-from vectorized_tmm_dispersive_multistack import coh_vec_tmm_disp_mstack as tmm
+from ..vectorized_tmm_dispersive_multistack import coh_vec_tmm_disp_mstack as tmm
 import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib
 
 class MultiLayerThinFilm(gym.Env):
-    def __init__(self, N, maximum_layers, target, weights=None, normalization=True, sparse_reward=True, substrate=None, ambient=None, relative_reward=True, max_thickness=150e-9, min_thickness=10e-9, work_path=''):
+    def __init__(self, 
+                 N:np.array, 
+                 maximum_layers:int, 
+                 target:dict, 
+                 weights:np.array=None, 
+                 normalization:bool=True, 
+                 sparse_reward:bool=True, 
+                 substrate:dict=None, 
+                 ambient:dict=None, 
+                 relative_reward:bool=True, 
+                 max_thickness:float=150e-9, 
+                 min_thickness:float=10e-9, 
+                 work_path:str='')->None:
         """
-        Initialize a new environment for multi-layer thin-film (MLTF) optimization.
+        Initialize a new environment for multi-layer thin-film (MLTF) optimization.
         Each layer is determined by its (dispersive) refractive index and a thickness.
         Thus, aside from choosing the material of a next layer to place, a reinforcement learning agent
         must also assign a thickness to this layer. This formulation allows to interpret the subsequent stacking of
@@ -18,45 +30,45 @@ class MultiLayerThinFilm(gym.Env):
 
         Contributors: Heribert Wankerl, Alexander Luce, Maike Stern
         (Feel free to add your name to the list in case you made major contributions or changes)
-                Args:
-
-                  N:                  np.array of shape [M x S]
-                where M is the number of available materials and S is the number of supporting points of the spectrum
-                N holds the (dispersive, complex) refractive indicies of the available materials
-            maximum_layers:     integer
-                maximum_layers defines the maximum number of layers to stack
-            target:             dictionary
-                with keys 'target', 'direction', 'spectrum' and 'mode'
-                target['direction'] holds the angles [deg, °] under consideration and is of shape D
-                target['spectrum'] holds the spectrum [m] under consideration and is of shape S
-                target['target'] holds the pixel-wise target reflectivity of a MLTF and is of shape [D x S]
-                target['mode'] states whether to use reflectivity' or 'transmittivity'
-            weights:            np.array of same shape [D x S]
-                This array allows to steer the pixels relative influence on the optimization/reward
-            normalization:      Boolean
-                Determines whether to exponentially transform the reward or not (Look publication for details)
-            sparse_reward:      Boolean
-                Determines whether to simulate and reward each intermediate stack or only the final stack
-            substrate:          dictionary or None
-                Holds the (dispersive, complex) refractive indicies of the substrate materials in the rows of
-                substrate['n'] which is of shape np.array of shape [Sub x S] . Sub is the number of materials that form
-                the substrate. substrate['d'] is of shape Sub and holds the corresponding thicknesses of each layer.
-                If substrate is None (default) it is set to vacuum of infinite thickness.
-            ambient:            dictionary or None
-                Holds the (dispersive, complex) refractive indicies of the ambient materials in the rows of
-                ambient['n'] which is of shape np.array of shape [Am x S] . Am is the number of materials that form
-                the ambient. ambient['d'] is of shape Am and holds the corresponding thicknesses of each layer.
-                If ambient is None (default) it is set to vacuum of infinite thickness.
-            relative_reward:    Boolean
-                Impact only if sparse_reward is False. Determines whether the provided reward signal for a stack is
-                computed independently (False) or as difference between two subsequent rewards (True), i.e. improvements
-                achieved by an action are measured by the reward in the latter case.
-            max_thickness:      float
-                Determines the maximum layer thickness in meter.
-            min_thickness:      float
-                Determines the minimum layer thickness in meter.
-            work_path:          str
-                Path to working directory e.g. to save images        
+        Parameters:
+        -----------
+        N : np.array of shape [M x S]
+            where M is the number of available materials and S is the number of supporting points of the spectrum
+            N holds the (dispersive, complex) refractive indices of the available materials
+        maximum_layers : integer
+            maximum_layers defines the maximum number of layers to stack
+        target : dictionary
+            with keys 'target', 'direction', 'spectrum' and 'mode'
+            target['direction'] holds the angles [deg, °] under consideration and is of shape D
+            target['spectrum'] holds the spectrum [m] under consideration and is of shape S
+            target['target'] holds the pixel-wise target reflectivity of a MLTF and is of shape [D x S]
+            target['mode'] states whether to use reflectivity' or 'transmittivity'
+        weights : np.array of same shape [D x S]
+            This array allows to steer the pixels relative influence on the optimization/reward
+        normalization : bool
+            Determines whether to exponentially transform the reward or not (Look publication for details)
+        sparse_reward : bool
+            Determines whether to simulate and reward each intermediate stack or only the final stack
+        substrate : dictionary or None
+            Holds the (dispersive, complex) refractive indices of the substrate materials in the rows of
+            substrate['n'] which is of shape np.array of shape [Sub x S] . Sub is the number of materials that form
+            the substrate. substrate['d'] is of shape Sub and holds the corresponding thicknesses of each layer.
+            If substrate is None (default) it is set to vacuum of infinite thickness.
+        ambient : dictionary or None
+            Holds the (dispersive, complex) refractive indices of the ambient materials in the rows of
+            ambient['n'] which is of shape np.array of shape [Am x S] . Am is the number of materials that form
+            the ambient. ambient['d'] is of shape Am and holds the corresponding thicknesses of each layer.
+            If ambient is None (default) it is set to vacuum of infinite thickness.
+        relative_reward : bool
+            Impact only if sparse_reward is False. Determines whether the provided reward signal for a stack is
+            computed independently (False) or as difference between two subsequent rewards (True), i.e. improvements
+            achieved by an action are measured by the reward in the latter case.
+        max_thickness : float
+            Determines the maximum layer thickness in meter.
+        min_thickness : float
+            Determines the minimum layer thickness in meter.
+        work_path : str
+            Path to working directory e.g. to save images
         """
 
         self.N = N
@@ -126,13 +138,14 @@ class MultiLayerThinFilm(gym.Env):
         self.axs = None
         # OpenAI gym related settings:
         # action space:
-        space_list = [spaces.Discrete(self.number_of_materials + 1)]
+        space_list = [spaces.Discrete((self.number_of_materials + 1))]
         for space in range(self.number_of_materials + 1):
             space_list.append(spaces.Box(low=0, high=1, shape=(1,)))
         self.action_space = spaces.Tuple(space_list)
-        self.action_space.spaces[0].shape = (1, )
+        # self.action_space.spaces[0].shape = (1, )
+
         # simulation state space:
-        self.observation_space = spaces.Box(low=0, high=1, shape=((self.number_of_materials + 1)*maximum_layers, ), dtype=np.float)
+        self.observation_space = spaces.Box(low=0, high=1, shape=((self.number_of_materials + 1)*maximum_layers, ), dtype=np.float64)
         if weights is None:
             self.weights = np.ones_like(self.target)
         else:
@@ -573,10 +586,10 @@ class MultiLayerThinFilm(gym.Env):
             return 0.4  # np.mean(self._reward_track)
 
     @property
-    def num_layers(self):
+    def num_layers(self)->float:
         """
         Returns the explicit number of layers of a stack
-            """
+        """
         if len(self.layers) == 0:
             return 0
         else:
@@ -592,7 +605,7 @@ class MultiLayerThinFilm(gym.Env):
     def reward_func(reflectivity, target, weights=None, baseline_mse=1.0, normalization=False, low_reward=0.01, high_reward=1.0):
         """
         An unconstrained reward computation based on the observed reflectivity and the given target.
-            """
+        """
         if weights is None:
             weights = np.ones_like(target)
         else:

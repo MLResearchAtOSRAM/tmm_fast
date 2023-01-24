@@ -23,7 +23,6 @@ In tmm.colors you will find extra functions for calculating the color of a
 multilayer thin film under reflected light.
 """
 
-from gym_multilayerthinfilm import *
-from gym_multilayerthinfilm.utils import *
-from gym_multilayerthinfilm.gym_class import *
+from tmm_fast.gym_multilayerthinfilm.utils import get_n_from_txt, get_N
+from tmm_fast.gym_multilayerthinfilm.gym_class import MultiLayerThinFilm
 

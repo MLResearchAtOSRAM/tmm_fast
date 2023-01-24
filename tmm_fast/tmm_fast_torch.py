@@ -1,12 +1,13 @@
 from tmm_fast_core import interface_t, interface_r
 import numpy as np
-import sys
-# from torch._C import dtype
-EPSILON = sys.float_info.epsilon
 from numpy import inf, nan, isnan, pi, seterr
 
 from torch import cos, zeros, exp, conj, sin, asin
 import torch
+
+from warnings import warn
+import sys
+EPSILON = sys.float_info.epsilon
 
 def make_2x2_tensor(a, b, c, d, dtype=float):
     """
@@ -441,7 +442,8 @@ def coh_tmm_fast_disp(pol, n_list, d_list, theta_incidence, lambda_vacuum):
     * th_list--(complex) propagation angle (in radians) in each layer
     * pol, n_list, d_list, th_0, lambda_vacuum--same as input
     """
-    
+    warn()
+
     # n_list holds refractive indices of every layer, beginning with the layer where the light enters the stack
     # d_list holds the thickness of every layer, same order as n_list
     # lambda_vacuum holds the vacuum wavelength of all wavelengths of interest
@@ -672,6 +674,8 @@ def coh_tmm_fast(pol, n_list, d_list, th_0, lambda_vacuum):
     * th_list--(complex) propagation angle (in radians) in each layer
     * pol, n_list, d_list, th_0, lambda_vacuum--same as input
     """
+    warn('This method is deprecated.', DeprecationWarning, stacklevel=2)
+
     # n_list holds refracitve indices of every layer, beginning with the layer where the light enters the stack
     # d_list holds the thickness of every layer, same order as n_list
     # lambda_vacuum holds the vacuum wavelength of all wavelegths of interest
