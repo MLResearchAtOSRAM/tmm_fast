@@ -1,3 +1,7 @@
+import numpy as np
+import matplotlib.colors as colors
+import matplotlib.cm as cm
+
 def plot_stacks(ax, indexes, thickness, labels=None, show_material=True):
     '''
     Plots material layers on top of each other with the refractive index of the layer in colorcode.

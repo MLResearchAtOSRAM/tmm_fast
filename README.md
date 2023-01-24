@@ -12,26 +12,35 @@ Figure 1: Overview about what you can do with this package.
 <!-- GETTING STARTED -->
 ## Getting Started
 
-To get a local copy up and running follow these simple steps.
-
-### Prerequisites
-
-tmm_fast requires some prerequisites:
-* Numpy
-* PyTorch >= 1.9
-* Dask
-* Matplotlib
-* Seaborn 
-* Gym
-  ```sh
-  pip install numpy pytorch>=1.9.1 dask matplotlib seaborn gym
-  ```
+To get a local copy up and running follow these steps:
 
 ### Installation
 
-1. Clone the repo
+1. Create a new conda environment via the provided yaml file:
+   ```sh
+   conda env create -f environment.yml
+   ```
+   and activate the newly created environment via 
+   ```sh
+   conda activate tmmfast
+   ```
+
+   If everything works, you're ready to go!
+
+2. Alternatively: clone the repo
    ```sh
    git clone https://github.com/MLResearchAtOSRAM/tmm_fast.git
+   ```
+
+   note that tmm_fast requires a few prerequisites to work:
+    * Numpy
+    * PyTorch >= 1.9
+    * Dask
+    * Matplotlib
+    * Seaborn 
+    * Gym
+   ```sh
+   pip install numpy pytorch>=1.9.1 dask matplotlib seaborn gym
    ```
 
 In case any dependency is not fulfilled, you can create an environment using gym_multilayerthinfilm.yml which is located in the package folder; don't forget to specify your python environment folder/path there (prefix).<br/>
