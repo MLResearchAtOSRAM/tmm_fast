@@ -1,4 +1,4 @@
-name: tmmfast2
+name: tmmfast
 channels:
   - conda-forge
   - vsc
