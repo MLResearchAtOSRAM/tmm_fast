@@ -61,8 +61,8 @@ def coh_vec_tmm_disp_mstack(pol:str,
             'T' : Tensor or array of Transmissivity / Transmittance for each stack (over angle and wavelength)
             Each of these tensors or arrays is of shape [S x A x W]
     optional output: list of two floats if timer=True
-            first entry holds the pushtime [sec] that is the time required to push the input data on the specified
-            device (i.e. cpu oder cuda), the second entry holds the total computation time [sec] (pushtime + tmm)
+            first entry holds the push time [sec] that is the time required to push the input data on the specified
+            device (i.e. cpu oder cuda), the second entry holds the total computation time [sec] (push time + tmm)
 
     Remarks and prior work from Byrnes:
     -----------------------------------

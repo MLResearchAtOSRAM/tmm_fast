@@ -142,7 +142,6 @@ class MultiLayerThinFilm(gym.Env):
         for space in range(self.number_of_materials + 1):
             space_list.append(spaces.Box(low=0, high=1, shape=(1,)))
         self.action_space = spaces.Tuple(space_list)
-        # self.action_space.spaces[0].shape = (1, )
 
         # simulation state space:
         self.observation_space = spaces.Box(low=0, high=1, shape=((self.number_of_materials + 1)*maximum_layers, ), dtype=np.float64)
