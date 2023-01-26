@@ -1,11 +1,19 @@
 import numpy as np
-import sys
 from numpy import pi, seterr
 from torch import cos, exp, conj, asin
 import torch
+
+from typing import Union
+import sys
 EPSILON = sys.float_info.epsilon
 
-def coh_vec_tmm_disp_mstack(pol, N, T, Theta, lambda_vacuum, device='cpu', timer=False):
+def coh_vec_tmm_disp_mstack(pol:str,
+                            N:Union[np.ndarray, torch.Tensor], 
+                            T:Union[np.ndarray, torch.Tensor], 
+                            Theta:Union[np.ndarray, torch.Tensor], 
+                            lambda_vacuum:Union[np.ndarray, torch.Tensor], 
+                            device:str='cpu', 
+                            timer:bool=False) -> dict:
     """
     Parallelized computation of reflection and transmission for coherent light spectra that traverse
     a bunch of multilayer thin-films with dispersive materials.
@@ -17,9 +25,9 @@ def coh_vec_tmm_disp_mstack(pol, N, T, Theta, lambda_vacuum, device='cpu', timer
     Although all internal computations are processed via PyTorch, the output data is converted to numpy arrays again.
     Hence, the use of numpy input may increase computation time due to data type conversions.
 
-    Parameters
-    ----------
-    pol : Str
+    Parameters:
+    -----------
+    pol : str
         Polarization of the light, accepts only 's' or 'p'
     N : Tensor or array
         PyTorch Tensor or numpy array of shape [S x L x W] with complex or real entries which contain the refractive
@@ -42,7 +50,9 @@ def coh_vec_tmm_disp_mstack(pol, N, T, Theta, lambda_vacuum, device='cpu', timer
     timer: Boolean
         Determines whether to track times for data pushing on CPU or GPU and total computation time; see output
         information for details on how to read out time
-    Returns
+
+    Returns:
+    --------
     output : Dict
         Keys:
             'r' : Tensor or array of Fresnel coefficients of reflection for each stack (over angle and wavelength)
@@ -51,12 +61,11 @@ def coh_vec_tmm_disp_mstack(pol, N, T, Theta, lambda_vacuum, device='cpu', timer
             'T' : Tensor or array of Transmissivity / Transmittance for each stack (over angle and wavelength)
             Each of these tensors or arrays is of shape [S x A x W]
     optional output: list of two floats if timer=True
-            first entry holds the pushtime [sec] that is the time required to push the input data on the specified
-            device (i.e. cpu oder cuda), the second entry holds the total computation time [sec] (pushtime + tmm)
+            first entry holds the push time [sec] that is the time required to push the input data on the specified
+            device (i.e. cpu oder cuda), the second entry holds the total computation time [sec] (push time + tmm)
 
     Remarks and prior work from Byrnes:
-    Upgrade to the regular coh_tmm from sbyrnes method. Does not perform checks and should
-    be cross validated with coh_tmm in case of doubt.
+    -----------------------------------
     Main "coherent transfer matrix method" calc. Given parameters of a stack,
     calculates everything you could ever want to know about how light
     propagates in it. (If performance is an issue, you can delete some of the
@@ -140,11 +149,12 @@ def coh_vec_tmm_disp_mstack(pol, N, T, Theta, lambda_vacuum, device='cpu', timer
 
     t_list = interface_t_vec(pol, N[:, :-1, :], N[:, 1:, :], SnellThetas[:, :, :-1, :], SnellThetas[:, :, 1:, :])
     r_list = interface_r_vec(pol, N[:, :-1, :], N[:, 1:, :], SnellThetas[:, :, :-1, :], SnellThetas[:, :, 1:, :])
-
+    
+    # A ist the propagation term for matrix optic and holds the appropriate accumulated phase for the thickness
+    # of each layer
     A = exp(1j * delta[:, :, :, 1:-1])
     F = r_list[:, :, :, 1:]
-    #     # A ist the propagation term for matrix optic and holds the appropriate accumulated phase for the thickness
-    #     # of each layer
+    
 
     # M_list holds the transmission and reflection matrices from matrix-optics
     # alex:
@@ -372,7 +382,17 @@ def T_from_t_vec(pol, t, n_i, n_f, th_i, th_f):
     else:
         raise ValueError("Polarization must be 's' or 'p'")
 
-def converter(data, device):
+def converter(data:Union[np.ndarray, torch.Tensor], device:str) -> torch.Tensor:
+    '''
+    Checks the datatype of data to torch.tensor and moves the tensor to the device.
+
+    Parameters:
+    -----------
+    data : array_like
+        data that should be converted to torch.Tensor
+    device : str
+        either 'cpu' or 'cuda'
+    '''
     if type(data) is not torch.Tensor:
         if type(data) is np.ndarray:
             data = torch.from_numpy(data.copy())
@@ -380,7 +400,7 @@ def converter(data, device):
             raise ValueError('At least one of the inputs (i.e. N, Theta, ...) is not of type numpy.array or torch.Tensor!')
     return data.type(torch.cfloat).to(device)
 
-def numpy_converter(data):
+def numpy_converter(data:torch.Tensor)->np.ndarray:
     data = data.detach().cpu().numpy()
     return data
 

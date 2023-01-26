@@ -1,6 +1,0 @@
-matplotlib
-numpy>=1.17.0
-pytictoc>=1.5.2
-tmm==0.1.8
-torch>=1.9.1
-
