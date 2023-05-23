@@ -38,13 +38,13 @@ To get a local copy up and running follow these steps:
     * Dask
     * Matplotlib
     * Seaborn 
-    * Gym
+    * Gymnasium
    ```sh
-   pip install numpy pytorch>=1.9.1 dask matplotlib seaborn gym
+   pip install numpy pytorch>=1.9.1 dask matplotlib seaborn gymnasium
    ```
 
 In case any dependency is not fulfilled, you can create an environment using gym_multilayerthinfilm.yml which is located in the package folder; don't forget to specify your python environment folder/path there (prefix).<br/>
-In general, there are no weird dependencies aside from numpy, matplotlib, seaborn, dask and gym. The tmm package can be downloaded/installed from here if necessary:<br/>
+In general, there are no weird dependencies aside from numpy, matplotlib, seaborn, dask and gymnasium. The tmm package can be downloaded/installed from here if necessary:<br/>
 ```sh
 pip install git+https://github.com/sbyrnes321/tmm.git
 ```
@@ -79,20 +79,20 @@ The physics behind the transfer matrix method can be studied in any textbook on 
 
 # gym-multilayerthinfilm
 
-The proposed OpenAI gym environment utilizes the parallelized transfer-matrix method (TMM-Fast) to implement the optimization of multi-layer thin films as parameterized Markov decision processes. An very intuitive example is provided in example.py.
-Whereas the contained physical methods are well-studied and known since decades, the contribution of this code lies the transfer to an OpenAI gym environment. The intention is to enable AI researchers without optical expertise to solve the corresponding parameterized Markov decision processes. Due to their structure, the solution of such problems is still an active field of research in the AI community.<br/>
+The proposed OpenAI/Farama-Foundation gymnasium environment utilizes the parallelized transfer-matrix method (TMM-Fast) to implement the optimization of multi-layer thin films as parameterized Markov decision processes. An very intuitive example is provided in example.py.
+Whereas the contained physical methods are well-studied and known since decades, the contribution of this code lies the transfer to an OpenAI/Farama-Foundation gymnasium environment. The intention is to enable AI researchers without optical expertise to solve the corresponding parameterized Markov decision processes. Due to their structure, the solution of such problems is still an active field of research in the AI community.<br/>
 The publication [Parameterized Reinforcement learning for Optical System Optimization](https://iopscience.iop.org/article/10.1088/1361-6463/abfddb) used this environment.
 
 
 ## Getting started
-To get started you can do the example py-files for tmm (example_tmm.py) or the gym environment (example_gym.py)!
+To get started you can do the example py-files for tmm (example_tmm.py) or the gymnasium environment (example_gym.py)!
 
 ## Multi-layer thin films meet parameterized reinforcement learning
 Reinforcement learning is an area of machine learning concerned with how intelligent agents ought to take actions in an environment in order to maximize the notion of reward. The code to be published implements such an environment for the optimization of multi-layer thin films.
 In principle, the proposed code allows to execute actions taken by an agent. These actions determine which material and with which thickness to stack next, thereby consecutively forming a multi-layer thin film as illustrated in Figure 1. Such a multilayer thin-film exhibits optical characteristics. By comparison between the actual and user-defined desired characteristics, a notion of numeric reward is computed based on which the agent learns to distinguish between good and bad design choices. Due to its physical and mathematical structure, the optimization of multi-layer thin film remains a challenging and thus still active field of research in the scientific community. As such it gained recent attention in many publications. Therefore, naturally the need for a standardized environment arises to make the corresponding research more trustful, comparable and consistent.
 
 ![image](https://user-images.githubusercontent.com/83709614/127179171-bc7e8fe5-bd83-4125-a84f-12a9e16c3150.png)<br/> 
-Figure 2: Principal idea of an OpenAI gym environment. The agent takes an action that specifies the material and thickness of the layer to stack next. The environment implements the multi-layer thin film generation as consecutive conduction of actions and assigns a reward to a proposed multi-layer thin film based on how close the actual (solid orange line) fulfils a desired (dashed orange line) characteristic. The made experience is used to adapt the taken actions made in order to increase the reward and thus generate more and more sophisticated multi-layer thin films.
+Figure 2: Principal idea of an OpenAI/Farama-Foundation gymnasium environment. The agent takes an action that specifies the material and thickness of the layer to stack next. The environment implements the multi-layer thin film generation as consecutive conduction of actions and assigns a reward to a proposed multi-layer thin film based on how close the actual (solid orange line) fulfils a desired (dashed orange line) characteristic. The made experience is used to adapt the taken actions made in order to increase the reward and thus generate more and more sophisticated multi-layer thin films.
 
 ### Description of key features
 The environment can include<br/> 

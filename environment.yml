@@ -1,7 +1,6 @@
 name: tmmfast
 channels:
   - conda-forge
-  - vsc
   - defaults
 dependencies:
   - appdirs=1.4.4=pyh9f0ad1d_0
@@ -44,7 +43,6 @@ dependencies:
   - m2w64-gcc-libs-core=5.3.0=7
   - m2w64-gmp=6.1.0=2
   - m2w64-libwinpthread-git=5.0.0.4634.697f757=2
-  - matplotlib-base=3.6.3=py38h528a6c7_0
   - mkl=2022.1.0=h6a75c08_874
   - msys2-conda-epoch=20160418=1
   - munkres=1.1.4=pyh9f0ad1d_0
@@ -86,22 +84,24 @@ dependencies:
   - xz=5.2.6=h8d14728_0
   - zstd=1.5.2=h12be248_6
   - pip:
-    - cloudpickle==2.2.0
-    - contourpy==1.0.5
-    - dask==2022.10.0
-    - fsspec==2022.10.0
-    - gym==0.26.2
-    - gym-notices==0.0.8
-    - importlib-metadata==5.0.0
-    - locket==1.0.0
-    - matplotlib==3.6.1
-    - numpy==1.23.4
-    - packaging==21.3
-    - partd==1.3.0
-    - pillow==9.2.0
-    - pytz==2022.5
-    - pyyaml==6.0
-    - toolz==0.12.0
-    - torch==1.12.1
-    - zipp==3.10.0
-    - git+https://github.com/MLResearchAtOSRAM/tmm_fast.git
+      - cloudpickle==2.2.0
+      - contourpy==1.0.5
+      - dask==2022.10.0
+      - farama-notifications==0.0.4
+      - fsspec==2022.10.0
+      - gym-notices==0.0.8
+      - gymnasium==0.28.1
+      - importlib-metadata==5.0.0
+      - jax-jumpy==1.0.0
+      - locket==1.0.0
+      - matplotlib==3.6.1
+      - numpy==1.23.4
+      - packaging==21.3
+      - partd==1.3.0
+      - pillow==9.2.0
+      - pytz==2022.5
+      - pyyaml==6.0
+      - toolz==0.12.0
+      - torch==1.12.1
+      - zipp==3.10.0
+      - git+https://github.com/MLResearchAtOSRAM/tmm_fast.git
