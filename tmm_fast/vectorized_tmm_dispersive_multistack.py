@@ -5,6 +5,7 @@ import torch
 
 from typing import Union
 import sys
+from warnings import warn
 EPSILON = sys.float_info.epsilon
 
 def coh_vec_tmm_disp_mstack(pol:str,
@@ -123,6 +124,8 @@ def coh_vec_tmm_disp_mstack(pol:str,
     num_angles = Theta.shape[0]
     num_wavelengths = lambda_vacuum.shape[0]
     check_inputs(N, T, lambda_vacuum, Theta)
+    N.imag = torch.clamp(N.imag, max=35.)
+    print(N)
 
     # if a constant refractive index is used (no dispersion) extend the tensor
     if N.ndim == 2:
@@ -157,10 +160,10 @@ def coh_vec_tmm_disp_mstack(pol:str,
     
 
     # M_list holds the transmission and reflection matrices from matrix-optics
-    # alex:
+    
     M_list = torch.zeros((num_stacks, num_angles, num_wavelengths, num_layers, 2, 2), dtype=torch.cfloat, device=device)
-    M_list[:, :, :, 1:-1, 0, 0] = torch.einsum('shji,sjhi->sjhi', 1 / A, 1 / t_list[:, :, :, 1:])
-    M_list[:, :, :, 1:-1, 0, 1] = torch.einsum('shji,sjhi->sjhi', 1 / A, F / t_list[:, :, :, 1:])
+    M_list[:, :, :, 1:-1, 0, 0] = torch.einsum('shji,sjhi->sjhi', 1 / (A + np.finfo(float).eps), 1 / t_list[:, :, :, 1:])
+    M_list[:, :, :, 1:-1, 0, 1] = torch.einsum('shji,sjhi->sjhi', 1 / (A + np.finfo(float).eps), F / t_list[:, :, :, 1:])
     M_list[:, :, :, 1:-1, 1, 0] = torch.einsum('shji,sjhi->sjhi', A, F / t_list[:, :, :, 1:])
     M_list[:, :, :, 1:-1, 1, 1] = torch.einsum('shji,sjhi->sjhi', A, 1 / t_list[:, :, :, 1:])
     Mtilde = torch.empty((num_stacks, num_angles, num_wavelengths, 2, 2), dtype=torch.cfloat, device=device)
@@ -424,6 +427,13 @@ def check_inputs(N, T, lambda_vacuum, Theta):
     assert not answer, 'Non real-valued refractive indicies detected for first layer, i.g. N[:, 0, w].imag > 0 for some valid w!'
     answer = torch.any((N[:, -1, :].imag > 0))
     assert not answer, 'Non real-valued refractive indicies detected for last layer, i.g. N[:, -1, w].imag > 0 for some valid w!'
+    # check for opacity 
+    if torch.any(N.imag > 35):
+        warn('Opacity warning. The imaginary part of the refractive index is clamped to 35i for numerical stability.')
+
+    
+    
+
 
 def make_2x2_tensor(a, b, c, d, dtype=float):
     """
