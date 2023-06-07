@@ -79,10 +79,9 @@ The physics behind the transfer matrix method can be studied in any textbook on 
 
 # gym-multilayerthinfilm
 
-The proposed OpenAI/Farama-Foundation gymnasium environment utilizes the parallelized transfer-matrix method (TMM-Fast) to implement the optimization of multi-layer thin films as parameterized Markov decision processes. An very intuitive example is provided in example.py.
+The proposed OpenAI/Farama-Foundation gymnasium environment utilizes the parallelized transfer-matrix method (TMM-Fast) to implement the optimization of multi-layer thin films as parameterized Markov decision processes. A very intuitive example is provided in example.py.
 Whereas the contained physical methods are well-studied and known since decades, the contribution of this code lies the transfer to an OpenAI/Farama-Foundation gymnasium environment. The intention is to enable AI researchers without optical expertise to solve the corresponding parameterized Markov decision processes. Due to their structure, the solution of such problems is still an active field of research in the AI community.<br/>
-The publication [Parameterized Reinforcement learning for Optical System Optimization](https://iopscience.iop.org/article/10.1088/1361-6463/abfddb) used this environment.
-
+The publication [Parameterized Reinforcement learning for Optical System Optimization](https://iopscience.iop.org/article/10.1088/1361-6463/abfddb) used a related environment.
 
 ## Getting started
 To get started you can do the example py-files for tmm (example_tmm.py) or the gymnasium environment (example_gym.py)!
