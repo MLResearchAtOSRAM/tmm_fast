@@ -125,7 +125,6 @@ def coh_vec_tmm_disp_mstack(pol:str,
     num_wavelengths = lambda_vacuum.shape[0]
     check_inputs(N, T, lambda_vacuum, Theta)
     N.imag = torch.clamp(N.imag, max=35.)
-    print(N)
 
     # if a constant refractive index is used (no dispersion) extend the tensor
     if N.ndim == 2:
