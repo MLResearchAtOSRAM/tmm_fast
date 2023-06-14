@@ -138,14 +138,14 @@ def coh_vec_tmm_disp_mstack(pol:str,
     theta = 2 * np.pi * torch.einsum('skij,sij->skij', cos(SnellThetas), N)  # [theta,d, lambda]
     kz_list = torch.einsum('sijk,k->skij', theta, 1 / lambda_vacuum)  # [lambda, theta, d]
 
-    # kz is the z-component of (complex) angular wavevector for forward-moving
+    # kz is the z-component of (complex) angular wavevector for the forward-moving
     # wave. Positive imaginary part means decaying.
 
     # delta is the total phase accrued by traveling through a given layer.
     # Ignore warning about inf multiplication
     olderr = seterr(invalid='ignore')
     delta = torch.einsum('skij,sj->skij', kz_list, T)
-    torch.clamp(delta.imag, max=35.)
+    delta.imag = torch.clamp(delta.imag, max=30.)
     seterr(**olderr)
 
     # t_list and r_list hold the transmission and reflection coefficients from
@@ -160,15 +160,15 @@ def coh_vec_tmm_disp_mstack(pol:str,
     F = r_list[:, :, :, 1:]
     
 
-    # M_list holds the transmission and reflection matrices from matrix-optics
+    # M_list holds the transmission and reflection matrices from matrix-optics 
     
-    M_list = torch.zeros((num_stacks, num_angles, num_wavelengths, num_layers, 2, 2), dtype=torch.cfloat, device=device)
+    M_list = torch.zeros((num_stacks, num_angles, num_wavelengths, num_layers, 2, 2), dtype=torch.complex128, device=device)
     M_list[:, :, :, 1:-1, 0, 0] = torch.einsum('shji,sjhi->sjhi', 1 / (A + np.finfo(float).eps), 1 / t_list[:, :, :, 1:])
     M_list[:, :, :, 1:-1, 0, 1] = torch.einsum('shji,sjhi->sjhi', 1 / (A + np.finfo(float).eps), F / t_list[:, :, :, 1:])
     M_list[:, :, :, 1:-1, 1, 0] = torch.einsum('shji,sjhi->sjhi', A, F / t_list[:, :, :, 1:])
     M_list[:, :, :, 1:-1, 1, 1] = torch.einsum('shji,sjhi->sjhi', A, 1 / t_list[:, :, :, 1:])
-    Mtilde = torch.empty((num_stacks, num_angles, num_wavelengths, 2, 2), dtype=torch.cfloat, device=device)
-    Mtilde[:, :, :] = make_2x2_tensor(1, 0, 0, 1, dtype=torch.cfloat)
+    Mtilde = torch.empty((num_stacks, num_angles, num_wavelengths, 2, 2), dtype=torch.complex128, device=device)
+    Mtilde[:, :, :] = make_2x2_tensor(1, 0, 0, 1, dtype=torch.complex128)
 
     # contract the M_list matrix along the dimension of the layers, all
     for i in range(1, num_layers - 1):
@@ -186,8 +186,8 @@ def coh_vec_tmm_disp_mstack(pol:str,
     Mtilde = torch.einsum('shijk,shikl->shijl', M_r0, Mtilde)
 
     # Net complex transmission and reflection amplitudes
-    r = Mtilde[:, :, :, 1, 0] / Mtilde[:, :, :, 0, 0]
-    t = 1 / Mtilde[:, :, :, 0, 0]
+    r = Mtilde[:, :, :, 1, 0] / (Mtilde[:, :, :, 0, 0] + np.finfo(float).eps)
+    t = 1 / (Mtilde[:, :, :, 0, 0] + np.finfo(float).eps)
 
     # Net transmitted and reflected power, as a proportion of the incoming light
     # power.
@@ -402,7 +402,7 @@ def converter(data:Union[np.ndarray, torch.Tensor], device:str) -> torch.Tensor:
             data = torch.from_numpy(data.copy())
         else:
             raise ValueError('At least one of the inputs (i.e. N, Theta, ...) is not of type numpy.array or torch.Tensor!')
-    return data.type(torch.cfloat).to(device)
+    return data.type(torch.complex128).to(device)
 
 def numpy_converter(data:torch.Tensor)->np.ndarray:
     data = data.detach().cpu().numpy()
