@@ -125,7 +125,6 @@ def coh_vec_tmm_disp_mstack(pol:str,
     num_wavelengths = lambda_vacuum.shape[0]
     check_inputs(N, T, lambda_vacuum, Theta)
     N.imag = torch.clamp(N.imag, max=35.)
-    print(N)
 
     # if a constant refractive index is used (no dispersion) extend the tensor
     if N.ndim == 2:
@@ -134,6 +133,7 @@ def coh_vec_tmm_disp_mstack(pol:str,
     # SnellThetas is a tensor, for each stack and layer, the angle that the light travels
     # through the layer. Computed with Snell's law. Note that the "angles" may be complex!
     SnellThetas = SnellLaw_vectorized(N, Theta)
+
 
     theta = 2 * np.pi * torch.einsum('skij,sij->skij', cos(SnellThetas), N)  # [theta,d, lambda]
     kz_list = torch.einsum('sijk,k->skij', theta, 1 / lambda_vacuum)  # [lambda, theta, d]
@@ -145,6 +145,7 @@ def coh_vec_tmm_disp_mstack(pol:str,
     # Ignore warning about inf multiplication
     olderr = seterr(invalid='ignore')
     delta = torch.einsum('skij,sj->skij', kz_list, T)
+    torch.clamp(delta.imag, max=35.)
     seterr(**olderr)
 
     # t_list and r_list hold the transmission and reflection coefficients from
