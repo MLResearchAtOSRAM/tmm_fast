@@ -1,8 +1,8 @@
 # gym-multilayerthinfilm
 
 ## Overview
-The proposed OpenAI gym environment utilizes a parallelized transfer-matrix method (TMM) to implement the optimization of for multi-layer thin films as parameterized Markov decision processes. An very intuitve example is provided in example.py.
-Whereas the contained physical methods are well-studied and known since decades, the contribution of this code lies the transfer to an OpenAI gym environment. The intention is to enable AI researchers without optical expertise to solve the corresponding parameterized Markov decision processes. Due to their structure, the solution of such problems is still an active field of research in the AI community.<br/>
+The proposed OpenAI/Farama-Foundation gymnasium environment utilizes a parallelized transfer-matrix method (TMM) to implement the optimization of for multi-layer thin films as parameterized Markov decision processes. An very intuitve example is provided in example.py.
+Whereas the contained physical methods are well-studied and known since decades, the contribution of this code lies the transfer to an OpenAI/Farama-Foundation gymnasium environment. The intention is to enable AI researchers without optical expertise to solve the corresponding parameterized Markov decision processes. Due to their structure, the solution of such problems is still an active field of research in the AI community.<br/>
 The publication [Parameterized Reinforcement learning for Optical System Optimization](https://iopscience.iop.org/article/10.1088/1361-6463/abfddb) used this environment.
 
 ## Multi-layer thin films meet parameterized reinforcement learning
@@ -10,7 +10,7 @@ Reinforcement learning is an area of machine learning concerned with how intelli
 In principle, the proposed code allows to execute actions taken by an agent. These actions determine which material of which thickness to stack next, thereby consecutively forming a multi-layer thin film as illustrated in figure 1. Such a multi-layer thin film exhibits optical characteristics. By comparison between the actual and user-defined desired characteristics, a notion of numeric reward is computed based on which the agent learns to distinguish between good and bad design choices. Due to its physical and mathematical structure, the optimization of multi-layer thin film remains a challenging and thus still active field of research in the scientific community. As such it gained recent attention in many publications. Therefore, naturally the need for a standardised environment arises to make the corresponding research more trustful, comparable and consistent.
 
 
-Figure 1: Principal idea of an OpenAI gym environment. The agent takes an action that specifies the material and thickness of the layer to stack next. The environment implements the multi-layer thin film generation as consecutive conduction of actions and assigns a reward to a proposed multi-layer thin film based on how close the actual (solid orange line) fulfils a desired (dashed orange line) characteristic. The made experience is used to adapt the taken actions made in order to increase the reward and thus generate more and more sophisticated multi-layer thin films.
+Figure 1: Principal idea of an OpenAI/Farama-Foundation gymnasium environment. The agent takes an action that specifies the material and thickness of the layer to stack next. The environment implements the multi-layer thin film generation as consecutive conduction of actions and assigns a reward to a proposed multi-layer thin film based on how close the actual (solid orange line) fulfils a desired (dashed orange line) characteristic. The made experience is used to adapt the taken actions made in order to increase the reward and thus generate more and more sophisticated multi-layer thin films.
 
 ## Describtion of key features
 The environment can include<br/> 

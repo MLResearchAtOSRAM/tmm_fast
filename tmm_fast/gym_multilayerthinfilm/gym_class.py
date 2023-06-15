@@ -1,13 +1,13 @@
 import random
 import numpy as np
-import gym
-from gym import spaces
+import gymnasium
+from gymnasium import spaces
 from ..vectorized_tmm_dispersive_multistack import coh_vec_tmm_disp_mstack as tmm
 import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib
 
-class MultiLayerThinFilm(gym.Env):
+class MultiLayerThinFilm(gymnasium.Env):
     def __init__(self, 
                  N:np.array, 
                  maximum_layers:int, 
@@ -136,7 +136,7 @@ class MultiLayerThinFilm(gym.Env):
         self.d = []
         self.f = None
         self.axs = None
-        # OpenAI gym related settings:
+        # OpenAI/Farama-Foundation gymnasium related settings:
         # action space:
         space_list = [spaces.Discrete((self.number_of_materials + 1))]
         for space in range(self.number_of_materials + 1):
