@@ -23,5 +23,5 @@ dependencies = [
     "pytorch>1.9",
     "matplotlib"
     "dask",
-    "gymnasium",
+    "gymnasium"
 ]
