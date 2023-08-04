@@ -21,7 +21,7 @@ classifiers = [
 dependencies = [
     "numpy",
     "pytorch>1.9",
-    "matplotlib"
+    "matplotlib",
     "dask",
     "gymnasium"
 ]
