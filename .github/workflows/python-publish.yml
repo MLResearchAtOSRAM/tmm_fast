@@ -38,7 +38,7 @@ jobs:
         user: __token__
         password: ${{ secrets.PYPI_API_TOKEN }}
 
-  deploy_windos:
+  deploy_windows:
     runs-on: windows-latest
 
     steps:
