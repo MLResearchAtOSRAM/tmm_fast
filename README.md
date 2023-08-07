@@ -16,37 +16,18 @@ To get a local copy up and running follow these steps:
 
 ### Installation
 
-1. Create a new conda environment via the provided yaml file:
-   ```sh
-   conda env create -f environment.yml
-   ```
-   and activate the newly created environment via 
-   ```sh
-   conda activate tmmfast
-   ```
+`tmm-fast` package requires `pytorch`, therefore it is better to install it first following [official instructions](https://pytorch.org/get-started/locally/).
 
-   If everything works, you're ready to go!
+Stable version from [pipy.org](https://pypi.org/project/tmm-fast/):
 
-2. Alternatively: clone the repo
-   ```sh
-   git clone https://github.com/MLResearchAtOSRAM/tmm_fast.git
-   ```
-
-   note that tmm_fast requires a few prerequisites to work:
-    * Numpy
-    * PyTorch >= 1.9
-    * Dask
-    * Matplotlib
-    * Seaborn 
-    * Gymnasium
-   ```sh
-   pip install numpy pytorch>=1.9.1 dask matplotlib seaborn gymnasium
-   ```
-
-In case any dependency is not fulfilled, you can create an environment using gym_multilayerthinfilm.yml which is located in the package folder; don't forget to specify your python environment folder/path there (prefix).<br/>
-In general, there are no weird dependencies aside from numpy, matplotlib, seaborn, dask and gymnasium. The tmm package can be downloaded/installed from here if necessary:<br/>
 ```sh
-pip install git+https://github.com/sbyrnes321/tmm.git
+pip install tmm-fast
+```
+
+Latest version from [github.com](https://github.com/MLResearchAtOSRAM/tmm_fast):
+
+```sh
+pip install git+https://github.com/MLResearchAtOSRAM/tmm_fast
 ```
 
 ## Unified functionality of tmm_fast: Sponge PyTorch functionality for free
