@@ -29,9 +29,9 @@ def inc_vec_tmm_disp_lstack(pol:str,
     -----------
     pol : str
         Polarization of the light, accepts only 's' or 'p'
-    N : list
-        List that contains the individual incoherent layers as torch.tensors or lists of 
-        a coherent stack
+    N : torch.Tensor
+        
+    L : torch.Tensor
 
         
     mask : list
@@ -42,14 +42,20 @@ def inc_vec_tmm_disp_lstack(pol:str,
     n_layers = L.shape[1]
     n_stack = L.shape[0]
     i = 0
-    n_L = int(n_layers - sum([len(m) for m in mask]) + 1)
-    L_ = torch.empty((n_stack, n_L, n_theta, n_lambda, 2, 2)) # 
+    L_coh = sum([len(m) for m in mask])
+    n_L_ = int(n_layers - L_coh - 1)
+    # matrix of Reflectivity and Transmissivity of the layer interfaces
+    requires_grad = True if (L.requires_grad or N.requires_grad) else False
+    L_ = torch.empty((n_stack, n_L_, n_theta, n_lambda, 2, 2)).requires_grad_(requires_grad)
 
-    snell_theta = SnellLaw_vectorized(N, theta.type(torch.complex128)).real
+    snell_theta = SnellLaw_vectorized(N, theta.type(torch.complex128)).real # propagation angle in every layer 
 
+    # first, the coherent substacks are evaluated
     for m in mask: # eg m = [4,5,6]
-        forward = coh_tmm(pol, N[:, m[0]], L[:, m[0]], snell_theta[:, m[0]-1], lambda_vacuum, device)
-        backward = coh_tmm(pol, N[:, m[0]][:, ::-1], L[:, m[0]][:, ::-1], snell_theta[m[-1]+1], lambda_vacuum, device)
+        forward = coh_tmm(pol, N[:, m], L[:, m], snell_theta[0, :, m[0]-1, 0], lambda_vacuum, device)
+        # the substack must be evaluated in both directions since we can have an incoming wave from the output side 
+        # (a reflection from an incoherent layer) and Reflectivit/Transmissivity can be different depending on the direction
+        backward = coh_tmm(pol, N[:, m].flip([1]), L[:, m].flip([1]), snell_theta[0, :, m[-1]+1, 0], lambda_vacuum, device)
         T_forward = forward['T'] #[n_stack, n_lambda, n_theta]
         T_backward = backward['T']
         R_forward = forward['R']
@@ -60,12 +66,18 @@ def inc_vec_tmm_disp_lstack(pol:str,
         L_[:, m[0]-1, :, :, 1, 0] = R_forward / T_forward
         L_[:, m[0]-1, :, :, 1, 1] = (T_forward*T_backward - R_forward*R_backward) / T_forward
 
-    # [0, 1, 5, 8, 9, 13, 14]
-    inc_mask = np.arange(n_layers, dtype=int)[np.array(mask).flatten()]
-    for k, m in zip( inc_mask[:-1], np.diff(inc_mask)):
-        if m == -1:
-            forward = coh_tmm(pol, N[:, k:k+1].real, L[:, k:k+1], snell_theta[:, k], lambda_vacuum, device)
-            backward = coh_tmm(pol, N[:, k:k+1][::-1].real, L[:, k:k+1][::-1], snell_theta[:, k+1], lambda_vacuum, device)
+    # [2, 3, 4, 7, 10, 11, 12]
+    # [0, 1, 5, 8, 9, 13, 14] inc
+    # Now, the incoherent layers are evaluated. In principle, the treatment is identical 
+    # to a coherent layer but the phase dependency is lost at each interface. 
+
+    inc_mask = np.isin(np.arange(n_layers, dtype=int), mask, invert=True)
+    inc_mask = np.arange(n_layers, dtype=int)[inc_mask]
+    
+    for k, m in zip(inc_mask[:-1], np.diff(inc_mask)):
+        if m == 1:
+            forward = coh_tmm(pol, N[:, k:k+2].real, L[:, k:k+2], snell_theta[0, :, k, 0], lambda_vacuum, device)
+            backward = coh_tmm(pol, N[:, k:k+2].flip([1]).real, L[:, k:k+2].flip([1]), snell_theta[0, :, k+1, 0], lambda_vacuum, device)
             T_forward = forward['T'] #[n_stack, n_lambda, n_theta]
             T_backward = backward['T']
             R_forward = forward['R']
@@ -77,11 +89,12 @@ def inc_vec_tmm_disp_lstack(pol:str,
             L_[:, k, :, :, 1, 1] = (T_forward*T_backward - R_forward*R_backward) / T_forward
 
     for k in inc_mask[1:-1]:
-        P = torch.exp(4*np.pi * (N[:, k]*torch.cos(snell_theta[:, k])).imag/lambda_vacuum * L[:, k])
-        L_[:, k] *= P
+        n_costheta = torch.einsum('ik,ijk->ijk', N[:,k], torch.cos(snell_theta[:, :, k])).imag # [n_stack, n_theta, n_lambda]
+        P = torch.exp(-4 * np.pi * (torch.einsum('ijk,k,i->ijk', n_costheta, 1/lambda_vacuum, L[:,k])))
+        L_[:, k] = torch.einsum('ijklm,ijk->ijklm', L_[:, k], P)
 
     L_tilde = torch.empty((n_stack, n_theta, n_lambda, 2, 2))
-    for i in range(1, n_L - 1):
+    for i in range(0, n_L_):
         L_tilde = torch.einsum('ijklm,ijklm->ijklm', L_tilde, L_[:, i])
 
 
@@ -90,3 +103,9 @@ def inc_vec_tmm_disp_lstack(pol:str,
     T = 1 / L_tilde[:,:,:,0,0]
 
     return {'R': R, 'T':T}
+
+#TODO
+def R_interface(pol:str, N:torch.Tensor, T:torch.Tensor, theta:torch.Tensor, wl:torch.tensor)->torch.Tensor:
+    pass
+def T_interface(pol:str, N:torch.Tensor, T:torch.Tensor, theta:torch.Tensor, wl:torch.tensor)->torch.Tensor:
+    pass
