@@ -191,7 +191,7 @@ def coh_vec_tmm_disp_mstack(pol:str,
 
     # Net transmitted and reflected power, as a proportion of the incoming light
     # power.
-    R = R_from_r(r)
+    R = R_from_r_vec(r)
     T = T_from_t_vec(pol, t, N[:, 0], N[:, -1], SnellThetas[:, :, 0], SnellThetas[:, :, -1])
 
     if squeezed_T and r.shape[0] == 1:
@@ -225,7 +225,7 @@ def SnellLaw_vectorized(n, th):
     n0 = torch.unsqueeze(n[:, 0], dim=-1)
     n0th = torch.matmul(n0, sin_th)
     assert n0th.shape == (n.shape[0], n.shape[-1], th.shape[0]), (n.shape[-1], th.shape[0])
-    angles = asin(torch.einsum('sij,ski->sjki', n0th, 1/n))
+    angles = asin(torch.einsum('sij,ski->sjki', n0th, 1/n).type(torch.complex128))
     assert angles.shape == (n.shape[0], th.shape[0], n.shape[1], n.shape[2]), (th.shape[0], n.shape[0], n.shape[1])
 
     # dim(angles) = [dim_theta, dim_d, dim_lambda]
@@ -356,7 +356,7 @@ def interface_t_vec(polarization, n_i, n_f, th_i, th_f):
     else:
         raise ValueError("Polarization must be 's' or 'p'")
 
-def R_from_r(r):
+def R_from_r_vec(r):
     """
     Calculate reflected power R, starting with reflection amplitude r.
     """
@@ -365,6 +365,14 @@ def R_from_r(r):
 def T_from_t_vec(pol, t, n_i, n_f, th_i, th_f):
     """
     Calculate transmitted power T, starting with transmission amplitude t.
+
+    Parameters:
+    -----------
+    pol : str
+        polarization, either 's' or 'p'
+    t : torch.Tensor 
+        transmission coefficients. Expects shape []
+    
     n_i, n_f are refractive indices of incident and final medium.
     th_i, th_f are (complex) propagation angles through incident & final medium
     (in radians, where 0=normal). "th" stands for "theta".
