@@ -409,7 +409,7 @@ def numpy_converter(data:torch.Tensor)->np.ndarray:
     return data
 
 def check_datatype(N, T, lambda_vacuum, Theta):
-    assert type(N) == type(T) == type(lambda_vacuum) == type(Theta), ValueError('All inputs (i.e. N, Theta, ...) must be of the same data type, i.e. numpy.array or torch.Tensor!')
+    assert type(N) == type(T) == type(lambda_vacuum) == type(Theta), ValueError('All inputs (i.e. N, Theta, ...) must be of the same data type, i.e. numpy.ndarray or torch.Tensor!')
     return type(N)
 
 def check_inputs(N, T, lambda_vacuum, Theta):
@@ -417,7 +417,10 @@ def check_inputs(N, T, lambda_vacuum, Theta):
     assert N.ndim == 3, 'N is not of shape [S x L x W] (3d), as it is of dimension ' + str(N.ndim)
     # check the dimensionalities of T:
     assert T.ndim == 2, 'T is not of shape [S x L] (2d), as it is of dimension ' + str(T.ndim)
-    assert T.shape[0] == N.shape[0] and T.shape[1] == N.shape[1], 'First and second dimension of N and T must coincide,\nfound N.shape=' + str(N.shape) + ' and T.shape=' + str(T.shape) + ' instead!'
+    assert T.shape[0] == N.shape[0], 'The number of thin-films (first dimension) of N and T must coincide, \
+    \nfound N.shape=' + str(N.shape) + ' and T.shape=' + str(T.shape) + ' instead!'
+    assert T.shape[1] == N.shape[1], 'The number of thin-film layers (second dimension) of N and T must coincide, \
+    \nfound N.shape=' + str(N.shape) + ' and T.shape=' + str(T.shape) + ' instead!'
     # check the dimensionality of Theta:
     assert Theta.ndim == 1, 'Theta is not of shape [A] (1d), as it is of dimension ' + str(Theta.ndim)
     # check the dimensionality of lambda_vacuum:
