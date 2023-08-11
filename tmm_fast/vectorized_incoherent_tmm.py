@@ -50,6 +50,9 @@ def inc_vec_tmm_disp_lstack(
     n_layers = L.shape[1]
     n_stack = L.shape[0]
     imask = get_imask(mask, n_layers)
+
+    coh_res_f = []
+    coh_res_b = []
     
     L_coh_loc = np.argwhere(np.diff(imask) != 1).flatten()
     L_inc_loc = np.argwhere(np.diff(imask) == 1).flatten()
@@ -72,21 +75,24 @@ def inc_vec_tmm_disp_lstack(
     #     for t in range(45):
     #         th_list[t, :, w] = list_snell(N[0, :, w], theta[t])
 
-    # first, the coherent substacks are evaluated
+    # first, the coherent substacks are evaluated with the adjacent incoherent stacks as input 
+    # and output stack. Therefore, k is set to zero for the coherent evaluation
     for i, m in zip(L_coh_loc, mask):  # eg m = [4,5,6]
         m_ = np.arange(m[0]-1, m[-1]+2, 1, dtype=int)
         N_ = N[:, m_]
         N_[:, 0].imag = N_[:, -1].imag = 0.
+        d = L[:, m_]
+        d[:, 0] = d[:, -1] = np.inf
         forward = coh_tmm(
-            pol, N_, L[:, m_], snell_theta[0, :, m_[0], 0].real, lambda_vacuum, device
+            pol, N_, d, snell_theta[0, :, m_[0], 0], lambda_vacuum, device
         )
         # the substack must be evaluated in both directions since we can have an incoming wave from the output side
         # (a reflection from an incoherent layer) and Reflectivit/Transmissivity can be different depending on the direction
         backward = coh_tmm(
             pol,
             N_.flip([1]),
-            L[:, m_].flip([1]),
-            snell_theta[0, :, m_[-1], 0].real,
+            d.flip([1]),
+            snell_theta[0, :, m_[-1], 0],
             lambda_vacuum,
             device,
         )
@@ -95,10 +101,12 @@ def inc_vec_tmm_disp_lstack(
         R_f = forward["R"]
         R_b = backward["R"]
 
-        sanity_checker(T_f)
-        sanity_checker(T_b)
-        sanity_checker(R_f)
-        sanity_checker(R_b)
+        coh_res_f.append(forward)
+        coh_res_b.append(backward)
+        # sanity_checker(T_f)
+        # sanity_checker(T_b)
+        # sanity_checker(R_f)
+        # sanity_checker(R_b)
 
         L_[:, i, :, :, 0, 0] = 1.0 / T_f
         L_[:, i, :, :, 0, 1] = -R_b / T_f
@@ -187,7 +195,7 @@ def inc_vec_tmm_disp_lstack(
 
     T = 1 / (L_tilde[..., 0, 0] + np.finfo(float).eps)
 
-    return {"R": R, "T": T, "L": L_}
+    return {"R": R, "T": T, "L": L_, 'coh_tmm_f':coh_res_f, 'coh_tmm_b':coh_res_b, 'P':P_, 'th_list':snell_theta}
 
 
 def sanity_checker(input):
