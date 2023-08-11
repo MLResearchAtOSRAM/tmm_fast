@@ -164,12 +164,12 @@ def inc_vec_tmm_disp_lstack(
             L_[:, i, :, :, 1, 0] = R_f / T_f
             L_[:, i, :, :, 1, 1] = ( T_b * T_f - R_b * R_f ) / T_f
 
-    for i, k in enumerate(imask[1:-1]):
+    for i, k in enumerate(imask[1:-1], 1):
         n_costheta = torch.einsum(
             "ik,ijk->ijk", N[:, k], torch.cos(snell_theta[:, :, k])
         ).imag  # [n_stack, n_theta, n_lambda]
         P = torch.exp(
-            -4
+            -4.
             * np.pi
             * (torch.einsum("ijk,k,i->ijk", n_costheta, 1 / lambda_vacuum, L[:, k]))
         )
@@ -178,6 +178,7 @@ def inc_vec_tmm_disp_lstack(
         P_[..., 1, 1] = P 
         L_[:, i] = torch.einsum("ijklm,ijkmn->ijkln", P_, L_[:, i])
 
+    #[0, 1, 2]
     L_tilde = L_[:, 0]
     for i in range(1, n_L_):
         L_tilde = torch.einsum("ijklm,ijkmn->ijkln", L_tilde, L_[:, i])
