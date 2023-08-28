@@ -272,7 +272,7 @@ def is_not_forward_angle(n, theta):
     # answer = (~(abs(ncostheta.imag) > 100 * EPSILON)) * (ncostheta.real > 0)
 
     # Case Im(n) < 0
-    assert (ncostheta.imag > -100 * EPSILON)[answer].all(), error_string
+    assert (ncostheta.imag > -100 * EPSILON)[~answer].all(), error_string
 
     # Case Re(n) < 0
     assert (ncostheta.real > -100 * EPSILON)[~answer].all(), error_string
