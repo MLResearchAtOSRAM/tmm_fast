@@ -143,6 +143,7 @@ def coh_vec_tmm_disp_mstack(pol:str,
     # delta is the total phase accrued by traveling through a given layer.
     # Ignore warning about inf multiplication
 
+
     delta = torch.einsum('skij,sj->skij', kz_list, T)
 
     # check for opacity. If too much of the optical power is absorbed in a layer
@@ -237,8 +238,17 @@ def SnellLaw_vectorized(n, th):
     # The first and last entry need to be the forward angle (the intermediate
     # layers don't matter, see https://arxiv.org/abs/1603.02720 Section 5)
 
-    angles[:, :, 0] = -is_not_forward_angle(n[:, 0], angles[:, :,  0]) * pi + angles[:, :, 0]
-    angles[:, :, -1] = -is_not_forward_angle(n[:, -1], angles[:, :, -1]) * pi + angles[:, :, -1]
+    angles[:, :, 0] = torch.where(
+        is_not_forward_angle(n[:, 0], angles[:, :, 0]).bool(),
+        pi - angles[:, :, 0],
+        angles[:, :, 0],
+    )
+    angles[:, :, -1] = torch.where(
+        is_not_forward_angle(n[:, -1], angles[:, :, -1]).bool(),
+        pi - angles[:, :, -1],
+        angles[:, :, -1],
+    )
+
     return angles
 
 def is_not_forward_angle(n, theta):
@@ -265,6 +275,17 @@ def is_not_forward_angle(n, theta):
     n = n.unsqueeze(1)
     ncostheta = torch.cos(theta) * n
     assert ncostheta.shape == theta.shape, 'ncostheta and theta shape doesnt match'
+    # answer = torch.empty_like(ncostheta, dtype=torch.bool)
+    # # Either evanescent decay or lossy medium. Either way, the one that
+    # # decays is the forward-moving wave
+    # answer = (abs(ncostheta.imag) > 100 * EPSILON) * (ncostheta.imag > 0)
+    # # Forward is the one with positive Poynting vector
+    # # Poynting vector is Re[n cos(theta)] for s-polarization or
+    # # Re[n cos(theta*)] for p-polarization, but it turns out they're consistent
+    # # so I'll just assume s then check both below
+    # answer = (~(abs(ncostheta.imag) > 100 * EPSILON)) * (ncostheta.real > 0)
+
+
     answer = torch.empty_like(ncostheta, dtype=torch.bool)
     answer[torch.where(ncostheta.imag > 100 * EPSILON)] = ncostheta.imag[torch.where(ncostheta.imag > 100 * EPSILON)] > 0
     answer[torch.where(~(ncostheta.imag > 100 * EPSILON))] = ncostheta.real[torch.where(~(ncostheta.imag > 100 * EPSILON))] > 0 
@@ -272,10 +293,10 @@ def is_not_forward_angle(n, theta):
     # answer = (~(abs(ncostheta.imag) > 100 * EPSILON)) * (ncostheta.real > 0)
 
     # Case Im(n) < 0
-    assert (ncostheta.imag > -100 * EPSILON)[~answer].all(), error_string
+    assert (ncostheta.imag > -100 * EPSILON)[answer].all(), error_string
 
     # Case Re(n) < 0
-    assert (ncostheta.real > -100 * EPSILON)[~answer].all(), error_string
+    assert (ncostheta.real > -100 * EPSILON)[answer].all(), error_string
     assert ((n * torch.cos(torch.conj(theta))).real > -100 * EPSILON)[answer].all(), error_string
 
     assert (ncostheta.imag < 100 * EPSILON)[~answer].all(), error_string
