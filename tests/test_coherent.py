@@ -195,5 +195,5 @@ def test_absorbing_coherent_stack():
 
 if __name__ == '__main__':
     test_input_output_medium()
-    # test_basic_coherent_stack()
-    # test_absorbing_coherent_stack()
+    test_basic_coherent_stack()
+    test_absorbing_coherent_stack()

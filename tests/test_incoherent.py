@@ -472,9 +472,9 @@ def test_absorbing_coherent_incoherent():
 
 
 if __name__=='__main__':
-    # test_incoherent_input_output_medium()
+    test_incoherent_input_output_medium()
     test_incoherent_numpy_input_output_medium()
-    # test_coherent_stack_with_incoherent_surrounding()
-    # test_coherent_incoherent()
-    # test_absorbing_fully_incoherent()
-    # test_absorbing_coherent_incoherent()
+    test_coherent_stack_with_incoherent_surrounding()
+    test_coherent_incoherent()
+    test_absorbing_fully_incoherent()
+    test_absorbing_coherent_incoherent()
