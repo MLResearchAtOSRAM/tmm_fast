@@ -240,8 +240,17 @@ def list_snell_vec(n_list, th):
     # The first and last entry need to be the forward angle (the intermediate
     # layers don't matter, see https://arxiv.org/abs/1603.02720 Section 5)
 
-    angles[:, 0] = -is_not_forward_angle(n_list[0], angles[:, 0]) * pi + angles[:, 0]
-    angles[:, -1] = -is_not_forward_angle(n_list[-1], angles[:, -1]) * pi + angles[:, -1]
+    angles[:, 0] = torch.where(
+        is_not_forward_angle(n_list[0], angles[:, 0]).bool(),
+        pi - angles[:, 0],
+        angles[:, 0],
+    )
+    angles[:, -1] = torch.where(
+        is_not_forward_angle(n_list[-1], angles[:, -1]).bool(),
+        pi - angles[:, -1],
+        angles[:, -1],
+    )
+
     return angles
 
 def interface_r_vec(polarization, n_i, n_f, th_i, th_f):
