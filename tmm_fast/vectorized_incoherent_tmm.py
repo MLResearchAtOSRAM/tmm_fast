@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from .vectorized_tmm_dispersive_multistack import coh_vec_tmm_disp_mstack as coh_tmm
+from .vectorized_tmm_dispersive_multistack import converter as converter2torch
 from .vectorized_tmm_dispersive_multistack import (
     SnellLaw_vectorized,
     interface_r_vec,
@@ -118,6 +119,10 @@ def inc_vec_tmm_disp_lstack(
     result_dict = inc_tmm_fast(pol, N, D, mask, th, wl, device='cpu')
 
     """
+    N = converter2torch(N, device)
+    D = converter2torch(D, device)
+
+
     n_lambda = len(lambda_vacuum)
     n_theta = len(theta)
     n_layers = D.shape[1]
