@@ -1,5 +1,7 @@
 import numpy as np
 import torch
+import sys
+sys.path.append(r"N:\Resources\T_Mesh\40_Userdata\Luce_Alexander\workspace\tmm_fast_osram\tmm_fast\\")
 from tmm_fast import inc_tmm as inc_tmm_fast
 import matplotlib.pyplot as plt
 
