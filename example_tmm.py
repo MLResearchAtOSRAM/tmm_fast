@@ -1,5 +1,6 @@
 import numpy as np
-from tmm_fast.vectorized_tmm_dispersive_multistack import coh_vec_tmm_disp_mstack as tmm
+import torch
+from tmm_fast import coh_tmm as tmm
 
 wl = np.linspace(400, 1200, 800) * (10**(-9))
 theta = np.linspace(0, 45, 45) * (np.pi/180)

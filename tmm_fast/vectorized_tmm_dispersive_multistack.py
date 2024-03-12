@@ -143,12 +143,13 @@ def coh_vec_tmm_disp_mstack(pol:str,
     # delta is the total phase accrued by traveling through a given layer.
     # Ignore warning about inf multiplication
 
+
     delta = torch.einsum('skij,sj->skij', kz_list, T)
 
     # check for opacity. If too much of the optical power is absorbed in a layer
     # it can lead to numerical instability.
-    if torch.any(torch.abs(delta.imag) > 35.):
-        delta = delta.real + 1j*torch.clamp(delta.imag, min=-35., max=35.)
+    if torch.any(delta.imag > 35.):
+        delta.imag = torch.clamp(delta.imag, max=35.)
         warn('Opacity warning. The imaginary part of the refractive index is clamped to 35i for numerical stability.\n'+
              'You might encounter problems with gradient computation...')
 
