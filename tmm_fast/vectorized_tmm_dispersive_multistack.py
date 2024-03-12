@@ -103,10 +103,10 @@ def coh_vec_tmm_disp_mstack(pol:str,
         starttime = time.time()
     datatype = check_datatype(N, T, lambda_vacuum, Theta)
     # check uniform data types (e.g. only np.array or torch.tensor) -> save this type
-    N = converter(N, device)
-    T = converter(T, device)
-    lambda_vacuum = converter(lambda_vacuum, device)
-    Theta = converter(Theta, device)
+    N = converter2torch(N, device)
+    T = converter2torch(T, device)
+    lambda_vacuum = converter2torch(lambda_vacuum, device)
+    Theta = converter2torch(Theta, device)
     squeezed_N = False
     squeezed_T = False
     if N.ndim < 3:
@@ -206,10 +206,10 @@ def coh_vec_tmm_disp_mstack(pol:str,
         t = torch.reshape(t, (t.shape[1], t.shape[2]))
 
     if datatype is np.ndarray:
-        r = numpy_converter(r)
-        t = numpy_converter(t)
-        R = numpy_converter(R)
-        T = numpy_converter(T)
+        r = converter2numpy(r)
+        t = converter2numpy(t)
+        R = converter2numpy(R)
+        T = converter2numpy(T)
 
     if timer:
         total_time = time.time() - starttime
@@ -472,7 +472,7 @@ def T_from_t_vec(pol, t, n_i, n_f, th_i, th_f):
     else:
         raise ValueError("Polarization must be 's' or 'p'")
 
-def converter(data:Union[np.ndarray, torch.Tensor], device:str) -> torch.Tensor:
+def converter2torch(data:Union[np.ndarray, torch.Tensor], device:str) -> torch.Tensor:
     '''
     Checks the datatype of data to torch.tensor and moves the tensor to the device.
 
@@ -490,7 +490,7 @@ def converter(data:Union[np.ndarray, torch.Tensor], device:str) -> torch.Tensor:
             raise ValueError('At least one of the inputs (i.e. N, Theta, ...) is not of type numpy.array or torch.Tensor!')
     return data.type(torch.complex128).to(device)
 
-def numpy_converter(data:torch.Tensor)->np.ndarray:
+def converter2numpy(data:torch.Tensor)->np.ndarray:
     data = data.detach().cpu().numpy()
     return data
 

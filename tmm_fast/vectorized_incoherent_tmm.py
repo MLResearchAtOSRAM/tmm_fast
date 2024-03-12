@@ -1,13 +1,14 @@
 import torch
 import numpy as np
 from .vectorized_tmm_dispersive_multistack import coh_vec_tmm_disp_mstack as coh_tmm
-from .vectorized_tmm_dispersive_multistack import converter as converter2torch
 from .vectorized_tmm_dispersive_multistack import (
     SnellLaw_vectorized,
     interface_r_vec,
     interface_t_vec,
     T_from_t_vec,
     R_from_r_vec,
+    converter2torch,
+    converter2numpy,
 )
 
 from typing import Union
