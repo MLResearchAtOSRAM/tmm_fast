@@ -30,6 +30,14 @@ Latest version from [github.com](https://github.com/MLResearchAtOSRAM/tmm_fast):
 pip install git+https://github.com/MLResearchAtOSRAM/tmm_fast
 ```
 
+To work on `tmm_fast` itself, create the conda environment defined in [environment.yml](environment.yml).
+It installs the runtime dependencies, the test requirements and the package itself in editable mode:
+
+```sh
+conda env create -f environment.yml
+conda activate tmm_fast
+```
+
 ## Unified functionality of tmm_fast: Sponge PyTorch functionality for free
 Parallelized computation of reflection and transmission for coherent light spectra that traverse
 a bunch of multilayer thin-films with dispersive materials.

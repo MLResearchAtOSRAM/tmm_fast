@@ -34,9 +34,11 @@ Figure 2: Rendered output of the environment. Reflectivity (left) over angle of 
 
 
 ## Getting started
-Required packages:<br/>
-numpy, matplotlib, dask, tmm as specified in env_mltf.yml
-based on which you can create an approbiate environment via line command<br/>
-conda env create -f env_mltf.yml<br/>
-Don't  forget to specify your common python environment path (prefix, last line in env_mltf.yml)!
+The environment requires numpy, pytorch, matplotlib and gymnasium. Installing `tmm_fast` pulls all
+of them in:<br/>
+`pip install tmm-fast`<br/>
+To work from a clone of the repository instead, create the conda environment defined in
+[environment.yml](../../environment.yml) in the repository root:<br/>
+`conda env create -f environment.yml`<br/>
+`conda activate tmm_fast`
 

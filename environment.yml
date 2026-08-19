@@ -1,0 +1,27 @@
+# Development environment, create it from the repository root:
+#   conda env create -f environment.yml
+# pytorch-cpu keeps the ~370 MB of CUDA packages out that conda-forge would otherwise
+# pull in by default; swap it for pytorch if you want a GPU build.
+#
+# Note that installation of the entire environment might take minutes.
+
+name: tmmfast_test
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python>=3.9
+  - numpy
+  - pytorch-cpu>1.9
+  - matplotlib
+  - gymnasium
+
+  - pytest
+  - ipython
+  - ipykernel
+
+  - pip
+  - pip:
+      - tmm  # scalar reference implementation the tests compare against
+      - --editable .

@@ -1,21 +1,39 @@
 [build-system]
-requires = ["setuptools", "setuptools-scm"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "tmm_fast"
 version = "0.2"
 authors = [
-    {name = "Alexander Luce", email = "alexander.luce@ams-osram.com"},
+    {name = "Alexander Luce", email = "alexander.luce@mpl.mpg.de"},
     {name = "Heribert Wankerl"},
 ]
 description = 'tmm_fast is a lightweight package to speed up optical planar multilayer thin-film device computation.'
 readme = "README.md"
-requires-python = ">=3.7"
-keywords = ["one", "two"]
+requires-python = ">=3.9"
+keywords = [
+    "transfer-matrix method",
+    "thin film",
+    "multilayer optics",
+    "photonics",
+    "pytorch",
+    "autograd",
+    "reinforcement learning",
+]
 license = "MIT"
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Physics",
 ]
 dependencies = [
     "numpy",
@@ -23,3 +41,23 @@ dependencies = [
     "matplotlib",
     "gymnasium",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "tmm",  # scalar reference implementation the tests compare against
+    "nbmake",
+    "ipykernel",
+]
+
+[project.urls]
+Homepage = "https://github.com/MLResearchAtOSRAM/tmm_fast"
+Issues = "https://github.com/MLResearchAtOSRAM/tmm_fast/issues"
+Publication = "https://doi.org/10.1364/JOSAA.450928"
+
+[tool.setuptools.packages.find]
+include = ["tmm_fast*"]
+
+[tool.setuptools.package-data]
+# the tabulated refractive indices read by tmm_fast.materials.load()
+"tmm_fast.materials" = ["*.txt"]
