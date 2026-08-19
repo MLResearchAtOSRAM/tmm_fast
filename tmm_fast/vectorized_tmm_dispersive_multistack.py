@@ -182,7 +182,7 @@ def coh_vec_tmm_disp_mstack(pol:str,
 
     # M_r0 accounts for the first and last stack where the translation coefficients are 1
     # todo: why compute separately?
-    M_r0 = torch.empty((num_stacks, num_angles, num_wavelengths, 2, 2), dtype=torch.cfloat, device=device)
+    M_r0 = torch.empty((num_stacks, num_angles, num_wavelengths, 2, 2), dtype=torch.complex128, device=device)
     M_r0[:, :, :, 0, 0] = 1
     M_r0[:, :, :, 0, 1] = r_list[:, :, :, 0]
     M_r0[:, :, :, 1, 0] = r_list[:, :, :, 0]
@@ -276,22 +276,15 @@ def is_not_forward_angle(n, theta):
     n = n.unsqueeze(1)
     ncostheta = torch.cos(theta) * n
     assert ncostheta.shape == theta.shape, 'ncostheta and theta shape doesnt match'
-    # answer = torch.empty_like(ncostheta, dtype=torch.bool)
-    # # Either evanescent decay or lossy medium. Either way, the one that
-    # # decays is the forward-moving wave
-    # answer = (abs(ncostheta.imag) > 100 * EPSILON) * (ncostheta.imag > 0)
-    # # Forward is the one with positive Poynting vector
-    # # Poynting vector is Re[n cos(theta)] for s-polarization or
-    # # Re[n cos(theta*)] for p-polarization, but it turns out they're consistent
-    # # so I'll just assume s then check both below
-    # answer = (~(abs(ncostheta.imag) > 100 * EPSILON)) * (ncostheta.real > 0)
-
-
-    answer = torch.empty_like(ncostheta, dtype=torch.bool)
-    answer[torch.where(ncostheta.imag > 100 * EPSILON)] = ncostheta.imag[torch.where(ncostheta.imag > 100 * EPSILON)] > 0
-    answer[torch.where(~(ncostheta.imag > 100 * EPSILON))] = ncostheta.real[torch.where(~(ncostheta.imag > 100 * EPSILON))] > 0 
-
-    # answer = (~(abs(ncostheta.imag) > 100 * EPSILON)) * (ncostheta.real > 0)
+    # For evanescent decay or a lossy medium the decaying wave is the forward-moving one,
+    # everywhere else it is the one with a positive Poynting vector. The Poynting vector is
+    # Re[n cos(theta)] for s-polarization and Re[n cos(theta*)] for p-polarization, but the
+    # two agree, so assume s here and check both in the assertions below.
+    # Note that the criterion is the magnitude of the imaginary part, not its sign: a wave
+    # decaying with Im[n cos(theta)] < 0 is evanescent just the same, and testing the signed
+    # value instead sends it down the propagating branch and trips the assertions.
+    evanescent = abs(ncostheta.imag) > 100 * EPSILON
+    answer = torch.where(evanescent, ncostheta.imag > 0, ncostheta.real > 0)
 
     # Case Im(n) < 0
     assert (ncostheta.imag > -100 * EPSILON)[answer].all(), error_string
