@@ -1,5 +1,4 @@
 numpy
 torch>=1.9
 Matplotlib
-Seaborn
 Gymnasium

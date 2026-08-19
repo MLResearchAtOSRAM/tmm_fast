@@ -35,7 +35,7 @@ Figure 2: Rendered output of the environment. Reflectivity (left) over angle of 
 
 ## Getting started
 Required packages:<br/>
-numpy, matplotlib, seaborn, dask, tmm as specified in env_mltf.yml
+numpy, matplotlib, dask, tmm as specified in env_mltf.yml
 based on which you can create an approbiate environment via line command<br/>
 conda env create -f env_mltf.yml<br/>
 Don't  forget to specify your common python environment path (prefix, last line in env_mltf.yml)!

@@ -33,8 +33,9 @@ def coh_vec_tmm_disp_mstack(pol:str,
         PyTorch Tensor or numpy array of shape [S x L x W] with complex or real entries which contain the refractive
         indices at the wavelengths of interest:
         S is the number of multi-layer thin films, L is the number of layers for each thin film, W is the number of
-        wavelength considered. Note that the first and last layer must feature real valued ()
-        refractive indicies, i.e. imag(N[:, 0, :]) = 0 and imag(N[:, -1, :]) = 0.
+        wavelength considered. Note that the first and last layer must feature real valued refractive indicies, i.e.
+        imag(N[:, 0, :]) = 0 and imag(N[:, -1, :]) = 0.
+        
     T : Tensor or array
         Holds the layer thicknesses of the individual layers for a bunch of thin films in nanometer.
         T is of shape [S x L] with real-valued entries; infinite values are allowed for the first and last layers only!

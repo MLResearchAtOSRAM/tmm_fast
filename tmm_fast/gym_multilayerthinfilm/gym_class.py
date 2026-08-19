@@ -3,9 +3,52 @@ import numpy as np
 import gymnasium
 from gymnasium import spaces
 from ..vectorized_tmm_dispersive_multistack import coh_vec_tmm_disp_mstack as tmm
-import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib
+
+# Colormap and number of axis ticks used by the heatmaps in render() and render_target()
+HEATMAP_CMAP = 'viridis'
+HEATMAP_TICKS = 10
+
+
+def _heatmap(ax, data, x_range, y_range, vmin=None, vmax=None, cmap=HEATMAP_CMAP, cbar=True):
+    """
+    Draws a 2d array as a heatmap on ax, with the first row at the top.
+
+    Parameters:
+    -----------
+    ax : matplotlib axes object
+        axes to draw the heatmap into
+    data : np.array of shape [D x S]
+        values to plot, e.g. a reflectivity over angle (rows) and wavelength (columns)
+    x_range, y_range : tuple of two floats
+        (min, max) of the physical quantity the respective axis represents. The axis is
+        labelled with HEATMAP_TICKS equidistant values taken from that range.
+    vmin, vmax : float or None
+        limits of the color scale; None autoscales to the data
+    cmap : str or matplotlib colormap
+        colormap of the heatmap
+    cbar : bool
+        whether to attach a colorbar to ax
+
+    Returns:
+    --------
+    image : matplotlib AxesImage
+        the drawn image, e.g. to attach a colorbar to it later on
+    """
+    num_rows, num_columns = data.shape
+    # extent places the cell edges on 0..num_columns / 0..num_rows so that the tick
+    # positions below are independent of the array shape
+    image = ax.imshow(data, vmin=vmin, vmax=vmax, cmap=cmap, aspect='auto', origin='upper',
+                      interpolation='nearest', extent=(0, num_columns, num_rows, 0))
+    if cbar:
+        ax.figure.colorbar(image, ax=ax)
+    ax.set_xticks(np.linspace(0, num_columns, HEATMAP_TICKS))
+    ax.set_yticks(np.linspace(0, num_rows, HEATMAP_TICKS))
+    ax.set_xticklabels(np.linspace(x_range[0], x_range[1], HEATMAP_TICKS, dtype=int), rotation=45, ha='right')
+    ax.set_yticklabels(np.linspace(y_range[0], y_range[1], HEATMAP_TICKS, dtype=int), rotation=0)
+    return image
+
 
 class MultiLayerThinFilm(gymnasium.Env):
     def __init__(self, 
@@ -361,20 +404,13 @@ class MultiLayerThinFilm(gymnasium.Env):
             plt.ylim([0, 1.05])
             plt.title('Reflectivity at wavelength ' + str(np.round(self.wl[0] * 10 ** 9, 3)) + ' nm\nReward = ' + str(np.round(self.reward, 4)))
         else:
-            yticks = np.linspace(0, self.target.shape[0], 10, dtype=int)
-            ytickslabels = np.linspace(np.min(self.angle), np.max(self.angle), 10, dtype=int)
-            xticks = np.linspace(0, self.target.shape[1], 10, dtype=int)
-            xtickslabels = np.linspace(np.min(self.wl*10**9), np.max(self.wl*10**9), 10, dtype=int)
-            colormap = None  # 'twilight'
-            g = sns.heatmap(self.simulation, vmin=min_val, vmax=max_val, ax=self.axs[0], xticklabels=xtickslabels, yticklabels=ytickslabels,
-                            cmap=colormap, cbar=cbar)
-            g.set_xticks(xticks)
-            g.set_yticks(yticks)
-            g.set_ylabel('Angle [deg, °]')
-            g.set_xlabel('Wavelength [nm]')
-            g.set_xticklabels(g.get_xticklabels(), rotation=45)
-            g.set_yticklabels(g.get_yticklabels(), rotation=0)
-            g.set_title('Reflectivity\nReward = ' + str(np.round(self.reward, 4)))
+            _heatmap(self.axs[0], self.simulation,
+                     x_range=(np.min(self.wl * 10 ** 9), np.max(self.wl * 10 ** 9)),
+                     y_range=(np.min(self.angle), np.max(self.angle)),
+                     vmin=min_val, vmax=max_val, cbar=cbar)
+            self.axs[0].set_ylabel('Angle [deg, °]')
+            self.axs[0].set_xlabel('Wavelength [nm]')
+            self.axs[0].set_title('Reflectivity\nReward = ' + str(np.round(self.reward, 4)))
 
         # plot stack:
         plt.sca(self.axs[1])
@@ -449,29 +485,18 @@ class MultiLayerThinFilm(gymnasium.Env):
             plt.ylim([0, 1.05 * np.max(self.weights)])
             plt.title('Weights at wavelength ' + str(np.round(self.wl[0] * 10 ** 9, 3)) + ' nm')
         else:
-            yticks = np.linspace(0, self.target.shape[0], 10, dtype=int)
-            ytickslabels = np.linspace(np.min(self.angle), np.max(self.angle), 10, dtype=int)
-            xticks = np.linspace(0, self.target.shape[1], 10, dtype=int)
-            xtickslabels = np.linspace(np.min(self.wl * 10 ** 9), np.max(self.wl * 10 ** 9), 10, dtype=int)
-            colormap = None  # 'twilight'
+            wl_range = (np.min(self.wl * 10 ** 9), np.max(self.wl * 10 ** 9))
+            angle_range = (np.min(self.angle), np.max(self.angle))
             # target:
-            g = sns.heatmap(self.target, vmin=0, vmax=1, ax=axs_target[0], xticklabels=xtickslabels, yticklabels=ytickslabels, cmap=colormap)
-            g.set_xticks(xticks)
-            g.set_yticks(yticks)
-            g.set_ylabel('Angle [deg, °]')
-            g.set_xlabel('Wavelength [nm]')
-            g.set_xticklabels(g.get_xticklabels(), rotation=45)
-            g.set_yticklabels(g.get_yticklabels(), rotation=0)
-            g.set_title('Target over angle and spectrum')
+            _heatmap(axs_target[0], self.target, x_range=wl_range, y_range=angle_range, vmin=0, vmax=1)
+            axs_target[0].set_ylabel('Angle [deg, °]')
+            axs_target[0].set_xlabel('Wavelength [nm]')
+            axs_target[0].set_title('Target over angle and spectrum')
             # weights:
-            g = sns.heatmap(self.weights, vmin=0, ax=axs_target[1], xticklabels=xtickslabels, yticklabels=ytickslabels, cmap=colormap)
-            g.set_xticks(xticks)
-            g.set_yticks(yticks)
-            g.set_ylabel('Angle [deg, °]')
-            g.set_xlabel('Wavelength [nm]')
-            g.set_xticklabels(g.get_xticklabels(), rotation=45)
-            g.set_yticklabels(g.get_yticklabels(), rotation=0)
-            g.set_title('Weights over angle and spectrum')
+            _heatmap(axs_target[1], self.weights, x_range=wl_range, y_range=angle_range, vmin=0)
+            axs_target[1].set_ylabel('Angle [deg, °]')
+            axs_target[1].set_xlabel('Wavelength [nm]')
+            axs_target[1].set_title('Weights over angle and spectrum')
             plt.tight_layout()
         plt.show(block=False)
         plt.pause(0.1)
