@@ -18,27 +18,23 @@ def _heatmap(ax, data, x_range, y_range, vmin=None, vmax=None, cmap=HEATMAP_CMAP
     Parameters:
     -----------
     ax : matplotlib axes object
-        axes to draw the heatmap into
+        Axes to draw into
     data : np.array of shape [D x S]
-        values to plot, e.g. a reflectivity over angle (rows) and wavelength (columns)
+        Values to plot, e.g. a reflectivity over angle (rows) and wavelength (columns)
     x_range, y_range : tuple of two floats
-        (min, max) of the physical quantity the respective axis represents. The axis is
-        labelled with HEATMAP_TICKS equidistant values taken from that range.
+        (min, max) of the quantity the respective axis represents; both axes are labelled
+        with HEATMAP_TICKS equidistant values taken from these ranges
     vmin, vmax : float or None
-        limits of the color scale; None autoscales to the data
-    cmap : str or matplotlib colormap
-        colormap of the heatmap
+        Limits of the color scale, None autoscales to the data
     cbar : bool
-        whether to attach a colorbar to ax
+        Whether to attach a colorbar to ax
 
     Returns:
     --------
     image : matplotlib AxesImage
-        the drawn image, e.g. to attach a colorbar to it later on
+        The drawn image, e.g. to attach a colorbar to later on
     """
     num_rows, num_columns = data.shape
-    # extent places the cell edges on 0..num_columns / 0..num_rows so that the tick
-    # positions below are independent of the array shape
     image = ax.imshow(data, vmin=vmin, vmax=vmax, cmap=cmap, aspect='auto', origin='upper',
                       interpolation='nearest', extent=(0, num_columns, num_rows, 0))
     if cbar:

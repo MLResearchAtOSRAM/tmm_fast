@@ -1,17 +1,11 @@
 import numpy as np
 
-from pathlib import Path
-
 import tmm_fast.gym_multilayerthinfilm as mltf
+from tmm_fast import materials
 
 # Material specifications
-# Pathes were material txt-files are stored are gathered in a list
-path = str(Path(__file__).parent)
-pathAu =  path+'\\tmm_fast\\materials\\nAu.txt'
-pathNb2O5 = path+'\\tmm_fast\\materials\\nNb2O5.txt'
-pathSiO2 = path+'\\tmm_fast\\materials\\nSiO2.txt'
-
-material_path_list = [pathAu, pathNb2O5, pathSiO2]
+# The materials shipped with tmm_fast are loaded by name, materials.available() lists them
+material_list = ['Au', 'Nb2O5', 'SiO2']
 
 # Specification of operation mode as well as angular and spectral range of interest
 
@@ -30,8 +24,8 @@ wl = np.linspace(lambda_min, lambda_max, int(lambda_max - lambda_min)) * 1e-9
 angle = np.linspace(angle_min, angle_max, int(angle_max - angle_min))
 target = {'direction': angle, 'spectrum': wl, 'target': target_array, 'mode': mode}
 
-N = mltf.get_N(material_path_list, lambda_min, lambda_max, points=int(lambda_max - lambda_min), complex_n=True)
-N = np.vstack((N, np.ones((1, N.shape[1]))))
+# The refractive indices of the materials above, plus vacuum as one more material to choose from
+N = np.vstack([materials.load(name, wl) for name in material_list] + [np.ones_like(wl)])
 
 # Creation of the environment given the above information
 env = mltf.MultiLayerThinFilm(N, maximum_number_of_layers, target)
