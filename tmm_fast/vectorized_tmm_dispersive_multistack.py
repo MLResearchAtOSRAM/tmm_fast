@@ -37,7 +37,7 @@ def coh_vec_tmm_disp_mstack(pol:str,
         imag(N[:, 0, :]) = 0 and imag(N[:, -1, :]) = 0.
         
     T : Tensor or array
-        Holds the layer thicknesses of the individual layers for a bunch of thin films in nanometer.
+        Layer thicknesses in metres for the individual thin-film stacks.
         T is of shape [S x L] with real-valued entries; infinite values are allowed for the first and last layers only!
     Theta : Tensor or array
         Theta determines the angles with which the light propagates in the injection layer.
@@ -46,7 +46,7 @@ def coh_vec_tmm_disp_mstack(pol:str,
         dispersive medium.
     lambda_vacuum : Tensor or numpy array
         Vacuum wavelengths for which reflection and transmission are computed given a bunch of thin films.
-        It is of shape [W] and holds the wavelengths in nanometer.
+        It is of shape [W] and holds the wavelengths in metres.
     device : Str
         Computation device, accepts ether 'cuda' or 'cpu'; GPU acceleration can lower the computational time especially
         for computation involving large tensors

@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools>=80", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "tmm_fast"
-version = "0.2"
+dynamic = ["version"]
 authors = [
     {name = "Alexander Luce", email = "alexander.luce@mpl.mpg.de"},
     {name = "Heribert Wankerl"},
@@ -67,3 +67,5 @@ include = ["tmm_fast*"]
 [tool.setuptools.package-data]
 # the tabulated refractive indices read by tmm_fast.materials.load()
 "tmm_fast.materials" = ["*.txt"]
+
+[tool.setuptools_scm]

@@ -24,6 +24,33 @@ Stable version from [pipy.org](https://pypi.org/project/tmm-fast/):
 pip install tmm-fast
 ```
 
+### Quickstart
+
+The public API uses metres for layer thicknesses and wavelengths, and radians for angles:
+
+```python
+import numpy as np
+
+from tmm_fast import coh_tmm
+
+wavelengths = np.linspace(400e-9, 800e-9, 201)
+angles = np.deg2rad([0, 30, 60])
+
+# One stack: air / absorbing film / glass.
+N = np.empty((1, 3, wavelengths.size), dtype=complex)
+N[:, 0, :] = 1.0
+N[:, 1, :] = 2.1 + 0.02j
+N[:, 2, :] = 1.5
+T = np.array([[np.inf, 120e-9, np.inf]])
+
+result = coh_tmm("s", N, T, angles, wavelengths)
+print(result["R"].shape)  # (1, 3, 201)
+```
+
+`R` and `T` contain reflected and transmitted power. For batched input their axes are
+`[stack, angle, wavelength]`; the example therefore evaluates one stack at three angles and
+201 wavelengths.
+
 Latest version from [github.com](https://github.com/MLResearchAtOSRAM/tmm_fast):
 
 ```sh
