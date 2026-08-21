@@ -9,6 +9,7 @@ from .vectorized_tmm_dispersive_multistack import (
     R_from_r_vec,
     converter2torch,
     converter2numpy,
+    resolve_device,
 )
 
 from typing import Union
@@ -21,7 +22,7 @@ def inc_vec_tmm_disp_lstack(
     mask: list,
     theta: Union[np.ndarray, torch.Tensor],
     lambda_vacuum: Union[np.ndarray, torch.Tensor],
-    device: str = "cpu",
+    device: Union[str, torch.device, None] = None,
     timer: bool = False,
 ) -> dict:
     """
@@ -58,8 +59,9 @@ def inc_vec_tmm_disp_lstack(
     lambda_vacuum : torch.tensor
         Vacuum wavelengths of the light in [m]. Must have shape
         [n_wl]
-    device : str
-        Device on which the computation should be done. Either "cpu" or "cuda"
+    device : str, torch.device or None
+        Computation device. When omitted, the device is inferred from N if N is a tensor and
+        otherwise defaults to CPU.
 
     Returns:
     --------
@@ -120,12 +122,13 @@ def inc_vec_tmm_disp_lstack(
     result_dict = inc_tmm_fast(pol, N, D, mask, th, wl, device='cpu')
 
     """
+    device = resolve_device(N, device)
     N = converter2torch(N, device)
     D = converter2torch(D, device)
-    theta = converter2torch(theta, device)
+    theta = torch.atleast_1d(converter2torch(theta, device))
     # torch.linspace hands out float32 by default, and 1 / lambda_vacuum below would then be
     # taken in single precision no matter how exact everything else is
-    lambda_vacuum = converter2torch(lambda_vacuum, device).real
+    lambda_vacuum = torch.atleast_1d(converter2torch(lambda_vacuum, device)).real
 
 
     n_lambda = len(lambda_vacuum)

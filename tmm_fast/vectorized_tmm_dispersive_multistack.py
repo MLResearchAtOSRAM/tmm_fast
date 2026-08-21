@@ -2,17 +2,17 @@ import numpy as np
 from numpy import pi
 import torch
 
-from typing import Union
+from typing import Optional, Union
 import sys
 from warnings import warn
 EPSILON = sys.float_info.epsilon
 
 def coh_vec_tmm_disp_mstack(pol:str,
-                            N:Union[np.ndarray, torch.Tensor], 
-                            T:Union[np.ndarray, torch.Tensor], 
-                            Theta:Union[np.ndarray, torch.Tensor], 
-                            lambda_vacuum:Union[np.ndarray, torch.Tensor], 
-                            device:str='cpu', 
+                            N:Union[np.ndarray, torch.Tensor, list, tuple],
+                            T:Union[np.ndarray, torch.Tensor, list, tuple],
+                            Theta:Union[np.ndarray, torch.Tensor, list, tuple, float],
+                            lambda_vacuum:Union[np.ndarray, torch.Tensor, list, tuple, float],
+                            device:Optional[Union[str, torch.device]]=None,
                             timer:bool=False) -> dict:
     """
     Parallelized computation of reflection and transmission for coherent light spectra that traverse
@@ -21,9 +21,8 @@ def coh_vec_tmm_disp_mstack(pol:str,
      - GPU accelerated computations
      - To compute gradients regarding the multilayer thin-film (i.e. N, T) thanks to Pytorch Autograd
 
-    However, the input can also be a numpy array format.
-    Although all internal computations are processed via PyTorch, the output data is converted to numpy arrays again.
-    Hence, the use of numpy input may increase computation time due to data type conversions.
+    Inputs may mix tensors, numpy arrays and plain array-like values. Outputs remain tensors when
+    any input is a tensor; otherwise they are converted to numpy arrays.
 
     Parameters:
     -----------
@@ -47,9 +46,9 @@ def coh_vec_tmm_disp_mstack(pol:str,
     lambda_vacuum : Tensor or numpy array
         Vacuum wavelengths for which reflection and transmission are computed given a bunch of thin films.
         It is of shape [W] and holds the wavelengths in metres.
-    device : Str
-        Computation device, accepts ether 'cuda' or 'cpu'; GPU acceleration can lower the computational time especially
-        for computation involving large tensors
+    device : str, torch.device or None
+        Computation device. When omitted, the device is inferred from N if N is a tensor and
+        otherwise defaults to CPU.
     timer: Boolean
         Determines whether to track times for data pushing on CPU or GPU and total computation time; see output
         information for details on how to read out time
@@ -104,12 +103,12 @@ def coh_vec_tmm_disp_mstack(pol:str,
     if timer:
         import time
         starttime = time.time()
-    datatype = check_datatype(N, T, lambda_vacuum, Theta)
-    # check uniform data types (e.g. only np.array or torch.tensor) -> save this type
+    return_numpy = not any(torch.is_tensor(value) for value in (N, T, Theta, lambda_vacuum))
+    device = resolve_device(N, device)
     N = converter2torch(N, device)
     T = converter2torch(T, device)
-    lambda_vacuum = converter2torch(lambda_vacuum, device)
-    Theta = converter2torch(Theta, device)
+    lambda_vacuum = torch.atleast_1d(converter2torch(lambda_vacuum, device))
+    Theta = torch.atleast_1d(converter2torch(Theta, device))
     # T tells a single stack, of shape [L], apart from a batch of them, of shape [S x L].
     # N follows suit and may additionally come without the wavelength axis if the materials
     # are dispersionless, i.e. [L] or [S x L] instead of [L x W] or [S x L x W].
@@ -212,7 +211,7 @@ def coh_vec_tmm_disp_mstack(pol:str,
         T = torch.reshape(T, (T.shape[1], T.shape[2]))
         t = torch.reshape(t, (t.shape[1], t.shape[2]))
 
-    if datatype is np.ndarray:
+    if return_numpy:
         r = converter2numpy(r)
         t = converter2numpy(t)
         R = converter2numpy(R)
@@ -435,7 +434,15 @@ def T_from_t_vec(pol, t, n_i, n_f, th_i, th_f):
     else:
         raise ValueError("Polarization must be 's' or 'p'")
 
-def converter2torch(data:Union[np.ndarray, torch.Tensor], device:str) -> torch.Tensor:
+def resolve_device(data, device: Optional[Union[str, torch.device]]) -> torch.device:
+    if device is not None:
+        return torch.device(device)
+    if torch.is_tensor(data):
+        return data.device
+    return torch.device('cpu')
+
+
+def converter2torch(data, device: Union[str, torch.device]) -> torch.Tensor:
     '''
     Checks the datatype of data to torch.tensor and moves the tensor to the device.
 
@@ -446,20 +453,17 @@ def converter2torch(data:Union[np.ndarray, torch.Tensor], device:str) -> torch.T
     device : str
         either 'cpu' or 'cuda'
     '''
-    if type(data) is not torch.Tensor:
-        if type(data) is np.ndarray:
-            data = torch.from_numpy(data.copy())
-        else:
-            raise ValueError('At least one of the inputs (i.e. N, Theta, ...) is not of type numpy.array or torch.Tensor!')
-    return data.type(torch.complex128).to(device)
+    if torch.is_tensor(data):
+        return data.to(device=device, dtype=torch.complex128)
+    try:
+        array = np.asarray(data)
+        return torch.as_tensor(array.copy(), dtype=torch.complex128, device=device)
+    except (TypeError, ValueError, RuntimeError) as error:
+        raise ValueError('Inputs must be tensors, numpy arrays, scalars, or array-like values') from error
 
 def converter2numpy(data:torch.Tensor)->np.ndarray:
     data = data.detach().cpu().numpy()
     return data
-
-def check_datatype(N, T, lambda_vacuum, Theta):
-    assert type(N) == type(T) == type(lambda_vacuum) == type(Theta), ValueError('All inputs (i.e. N, Theta, ...) must be of the same data type, i.e. numpy.ndarray or torch.Tensor!')
-    return type(N)
 
 def check_inputs(N, T, lambda_vacuum, theta):
     # check the dimensionalities of N:

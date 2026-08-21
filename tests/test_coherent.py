@@ -1,10 +1,12 @@
+import inspect
+
 import numpy as np
 import pytest
 import torch
 
 from tmm import coh_tmm
 
-from tmm_fast import coh_tmm as coh_tmm_fast
+from tmm_fast import coh_tmm as coh_tmm_fast, inc_tmm
 
 POLARIZATIONS = ['s', 'p']
 
@@ -168,6 +170,44 @@ def test_dispersionless_multiple_stacks(pol):
         R_tmm, T_tmm = dispersionless_reference(pol, M[stack].tolist(), T[stack].tolist(), theta, wl)
         torch.testing.assert_close(R_tmm, O_fast['R'][stack], rtol=1e-10, atol=1e-12)
         torch.testing.assert_close(T_tmm, O_fast['T'][stack], rtol=1e-10, atol=1e-12)
+
+
+def test_mixed_inputs_and_scalar_angle():
+    wl = np.linspace(500e-9, 700e-9, 3)
+    theta = 0.3
+    N = torch.tensor([1.0, 2.1 + 0.02j, 1.5], dtype=torch.complex128)
+    T = [np.inf, 120e-9, np.inf]
+
+    mixed = coh_tmm_fast('s', N, T, theta, wl)
+    expected = coh_tmm_fast(
+        's', N, torch.tensor(T), torch.tensor([theta]), torch.from_numpy(wl)
+    )
+
+    assert isinstance(mixed['R'], torch.Tensor)
+    assert mixed['R'].shape == (1, wl.size)
+    torch.testing.assert_close(mixed['R'], expected['R'])
+    torch.testing.assert_close(mixed['T'], expected['T'])
+
+
+def test_plain_lists_and_scalar_wavelength_return_numpy():
+    result = coh_tmm_fast(
+        'p', [1.0, 1.8, 1.5], [np.inf, 100e-9, np.inf], 0.0, 600e-9
+    )
+
+    assert isinstance(result['R'], np.ndarray)
+    assert result['R'].shape == (1, 1)
+    assert np.isfinite(result['R']).all()
+    assert np.isfinite(result['T']).all()
+
+
+def test_device_is_inferred_from_refractive_indices():
+    assert inspect.signature(coh_tmm_fast).parameters['device'].default is None
+    assert inspect.signature(inc_tmm).parameters['device'].default is None
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    N = torch.tensor([1.0, 1.8, 1.5], dtype=torch.complex128, device=device)
+    result = coh_tmm_fast('s', N, [np.inf, 100e-9, np.inf], 0.0, 600e-9)
+    assert result['R'].device == device
 
 
 if __name__ == '__main__':
