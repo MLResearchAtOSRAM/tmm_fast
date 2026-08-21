@@ -1,0 +1,30 @@
+# Development environment, create it from the repository root:
+#   conda env create -f environment.yml
+#   conda activate tmmfast
+#   pip install --group dev
+#
+# The dev tooling (pytest, the tmm reference implementation, the notebook runners) is declared
+# once, in the [dependency-groups] table of pyproject.toml. It cannot come from the pip: block
+# below: conda hands that to pip as a requirements file, and those reject --group. Hence the
+# separate step above, which needs pip >= 25.1.
+#
+# pytorch-cpu keeps the ~370 MB of CUDA packages out that conda-forge would otherwise
+# pull in by default; swap it for pytorch if you want a GPU build.
+#
+# Note that installation of the entire environment might take minutes.
+
+name: tmmfast
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python>=3.9
+  - numpy
+  - pytorch-cpu>1.9
+  - matplotlib
+  - gymnasium
+
+  - pip
+  - pip:
+      - --editable .

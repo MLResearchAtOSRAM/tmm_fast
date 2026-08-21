@@ -24,11 +24,57 @@ Stable version from [pipy.org](https://pypi.org/project/tmm-fast/):
 pip install tmm-fast
 ```
 
+### Quickstart
+
+The public API uses metres for layer thicknesses and wavelengths, and radians for angles:
+
+```python
+import numpy as np
+
+from tmm_fast import coh_tmm
+
+wavelengths = np.linspace(400e-9, 800e-9, 201)
+angles = np.deg2rad([0, 30, 60])
+
+# One stack: air / absorbing film / glass.
+N = np.empty((1, 3, wavelengths.size), dtype=complex)
+N[:, 0, :] = 1.0
+N[:, 1, :] = 2.1 + 0.02j
+N[:, 2, :] = 1.5
+T = np.array([[np.inf, 120e-9, np.inf]])
+
+result = coh_tmm("s", N, T, angles, wavelengths)
+print(result["R"].shape)  # (1, 3, 201)
+```
+
+`R` and `T` contain reflected and transmitted power. For batched input their axes are
+`[stack, angle, wavelength]`; the example therefore evaluates one stack at three angles and
+201 wavelengths.
+
 Latest version from [github.com](https://github.com/MLResearchAtOSRAM/tmm_fast):
 
 ```sh
 pip install git+https://github.com/MLResearchAtOSRAM/tmm_fast
 ```
+
+To work on `tmm_fast` itself, create the conda environment defined in [environment.yml](environment.yml).
+It installs the runtime dependencies and the package itself in editable mode. The test and notebook
+requirements are a separate `dev` dependency group, so they never reach anyone installing the
+released package:
+
+```sh
+conda env create -f environment.yml
+conda activate tmmfast
+pip install --group dev
+```
+
+Without conda, the same from a checkout:
+
+```sh
+pip install -e . --group dev
+```
+
+`--group` needs pip >= 25.1. Either way, `pytest tests/` then runs the suite.
 
 ## Unified functionality of tmm_fast: Sponge PyTorch functionality for free
 Parallelized computation of reflection and transmission for coherent light spectra that traverse
@@ -60,7 +106,7 @@ The physics behind the transfer matrix method can be studied in any textbook on 
 
 # gym-multilayerthinfilm
 
-The proposed OpenAI/Farama-Foundation gymnasium environment utilizes the parallelized transfer-matrix method (TMM-Fast) to implement the optimization of multi-layer thin films as parameterized Markov decision processes. A very intuitive example is provided in example.py.
+The proposed OpenAI/Farama-Foundation gymnasium environment utilizes the parallelized transfer-matrix method (TMM-Fast) to implement the optimization of multi-layer thin films as parameterized Markov decision processes. A very intuitive example is provided in example_gym.py.
 Whereas the contained physical methods are well-studied and known since decades, the contribution of this code lies the transfer to an OpenAI/Farama-Foundation gymnasium environment. The intention is to enable AI researchers without optical expertise to solve the corresponding parameterized Markov decision processes. Due to their structure, the solution of such problems is still an active field of research in the AI community.<br/>
 The publication [Parameterized Reinforcement learning for Optical System Optimization](https://iopscience.iop.org/article/10.1088/1361-6463/abfddb) used a related environment.
 

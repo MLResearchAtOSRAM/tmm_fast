@@ -1,7 +1,7 @@
 # gym-multilayerthinfilm
 
 ## Overview
-The proposed OpenAI/Farama-Foundation gymnasium environment utilizes a parallelized transfer-matrix method (TMM) to implement the optimization of for multi-layer thin films as parameterized Markov decision processes. An very intuitve example is provided in example.py.
+The proposed OpenAI/Farama-Foundation gymnasium environment utilizes a parallelized transfer-matrix method (TMM) to implement the optimization of for multi-layer thin films as parameterized Markov decision processes. An very intuitve example is provided in [example_gym.py](../../example_gym.py).
 Whereas the contained physical methods are well-studied and known since decades, the contribution of this code lies the transfer to an OpenAI/Farama-Foundation gymnasium environment. The intention is to enable AI researchers without optical expertise to solve the corresponding parameterized Markov decision processes. Due to their structure, the solution of such problems is still an active field of research in the AI community.<br/>
 The publication [Parameterized Reinforcement learning for Optical System Optimization](https://iopscience.iop.org/article/10.1088/1361-6463/abfddb) used this environment.
 
@@ -34,9 +34,11 @@ Figure 2: Rendered output of the environment. Reflectivity (left) over angle of 
 
 
 ## Getting started
-Required packages:<br/>
-numpy, matplotlib, seaborn, dask, tmm as specified in env_mltf.yml
-based on which you can create an approbiate environment via line command<br/>
-conda env create -f env_mltf.yml<br/>
-Don't  forget to specify your common python environment path (prefix, last line in env_mltf.yml)!
+The environment requires numpy, pytorch, matplotlib and gymnasium. Installing `tmm_fast` pulls all
+of them in:<br/>
+`pip install tmm-fast`<br/>
+To work from a clone of the repository instead, create the conda environment defined in
+[environment.yml](../../environment.yml) in the repository root:<br/>
+`conda env create -f environment.yml`<br/>
+`conda activate tmm_fast`
 

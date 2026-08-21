@@ -7,6 +7,9 @@ from .vectorized_tmm_dispersive_multistack import (
     interface_t_vec,
     T_from_t_vec,
     R_from_r_vec,
+    converter2torch,
+    converter2numpy,
+    resolve_device,
 )
 
 from typing import Union
@@ -19,7 +22,7 @@ def inc_vec_tmm_disp_lstack(
     mask: list,
     theta: Union[np.ndarray, torch.Tensor],
     lambda_vacuum: Union[np.ndarray, torch.Tensor],
-    device: str = "cpu",
+    device: Union[str, torch.device, None] = None,
     timer: bool = False,
 ) -> dict:
     """
@@ -56,17 +59,18 @@ def inc_vec_tmm_disp_lstack(
     lambda_vacuum : torch.tensor
         Vacuum wavelengths of the light in [m]. Must have shape
         [n_wl]
-    device : str
-        Device on which the computation should be done. Either "cpu" or "cuda"
+    device : str, torch.device or None
+        Computation device. When omitted, the device is inferred from N if N is a tensor and
+        otherwise defaults to CPU.
 
     Returns:
     --------
     dict : 
-        "R": torch.Tensor
+        "R": torch.Tensor or np.ndarray
             Reflectivity of the entire stack of incoherent and coherent layers
-        "T": torch.Tensor
+        "T": torch.Tensor or np.ndarray
             Transmissivity of the entire stack of incoherent and coherent layers
-        "L": torch.Tensor
+        "L": torch.Tensor or np.ndarray
             Interface matrices see Byrnes Eq. 28
         'coh_tmm_f': dict
             Forward result for the coherent substacks in order. The dict contains the
@@ -74,9 +78,9 @@ def inc_vec_tmm_disp_lstack(
         'coh_tmm_b': torch.Tensor
             Backward result for the coherent substacks in order. The dict contains the
             results of a normal coherent stack
-        'P': torch.Tensor
+        'P': torch.Tensor or np.ndarray
             Absorption in the incoherent layers
-        'th_list': torch.Tensor
+        'th_list': torch.Tensor or np.ndarray
             Complex angles according to snells law in all layers
 
     Example:
@@ -104,7 +108,7 @@ def inc_vec_tmm_disp_lstack(
     N[:, 3] = 1.3 + .003j
     N[:, 4] = 1.1 + .0j
 
-    D = layer_thicknesses = torch.empty((n_stacks, n_layers), dtype=torch.float128)
+    D = layer_thicknesses = torch.empty((n_stacks, n_layers), dtype=torch.float64)
     D[:, 0] = np.inf
     # test how a a change of the first layer thickness changes the result
     D[0, 1] = 200e-9
@@ -118,10 +122,24 @@ def inc_vec_tmm_disp_lstack(
     result_dict = inc_tmm_fast(pol, N, D, mask, th, wl, device='cpu')
 
     """
+    return_numpy = not any(
+        torch.is_tensor(value) for value in (N, D, theta, lambda_vacuum)
+    )
+    device = resolve_device(N, device)
+    N = converter2torch(N, device)
+    D = converter2torch(D, device)
+    theta = torch.atleast_1d(converter2torch(theta, device))
+    # torch.linspace hands out float32 by default, and 1 / lambda_vacuum below would then be
+    # taken in single precision no matter how exact everything else is
+    lambda_vacuum = torch.atleast_1d(converter2torch(lambda_vacuum, device)).real
+
+
     n_lambda = len(lambda_vacuum)
     n_theta = len(theta)
     n_layers = D.shape[1]
     n_stack = D.shape[0]
+    if N.ndim == 2:
+        N = N.unsqueeze(-1).repeat(1, 1, n_lambda)
     imask = get_imask(mask, n_layers)
 
     coh_res_f = []
@@ -132,9 +150,13 @@ def inc_vec_tmm_disp_lstack(
 
     n_L_ = len(imask) -1
     # matrix of Reflectivity and Transmissivity of the layer interfaces
-    requires_grad = True if (D.requires_grad or N.requires_grad) else False
-    L_ = torch.empty((n_stack, n_L_, n_theta, n_lambda, 2, 2)).requires_grad_(
-        requires_grad
+    # no requires_grad_ here: that would make L_ a leaf, and filling a leaf by assignment is
+    # what autograd forbids. Assigning tracked values into an ordinary tensor is enough for
+    # gradients to flow back to N and D.
+    L_ = torch.empty(
+        (n_stack, n_L_, n_theta, n_lambda, 2, 2),
+        dtype=torch.float64,
+        device=N.device,
     )
 
     snell_theta = SnellLaw_vectorized(
@@ -150,7 +172,7 @@ def inc_vec_tmm_disp_lstack(
         d = D[:, m_]
         d[:, 0] = d[:, -1] = np.inf
         forward = coh_tmm(
-            pol, N_, d, snell_theta[0, :, m_[0], 0], lambda_vacuum, device
+            pol, N_, d, snell_theta[:, :, m_[0], :], lambda_vacuum, device
         )
         # the substack must be evaluated in both directions since we can have an incoming wave from the output side
         # (a reflection from an incoherent layer) and Reflectivit/Transmissivity can be different depending on the direction
@@ -158,7 +180,7 @@ def inc_vec_tmm_disp_lstack(
             pol,
             N_.flip([1]),
             d.flip([1]),
-            snell_theta[0, :, m_[-1], 0],
+            snell_theta[:, :, m_[-1], :],
             lambda_vacuum,
             device,
         )
@@ -244,12 +266,14 @@ def inc_vec_tmm_disp_lstack(
         P = torch.exp(
             -4.
             * np.pi
-            * (torch.einsum("ijk,k,i->ijk", n_costheta, 1 / lambda_vacuum, D[:, k]))
-        )
-        P_ = torch.zeros((*P.shape, 2, 2)) # [n_stack, n_th, n_wl, 2, 2]
+            * (torch.einsum("ijk,k,i->ijk", n_costheta, 1 / lambda_vacuum, D[:, k].real))
+        ).clamp_min(1e-30)
+        P_ = torch.zeros((*P.shape, 2, 2), dtype=P.dtype, device=P.device) # [n_stack, n_th, n_wl, 2, 2]
         P_[..., 0, 0] = 1/P
         P_[..., 1, 1] = P 
-        L_[:, i] = torch.einsum("ijklm,ijkmn->ijkln", P_, L_[:, i])
+        # the clone matters: without it this reads and writes the same storage, and backward
+        # then finds the tensor it saved has been mutated
+        L_[:, i] = torch.einsum("ijklm,ijkmn->ijkln", P_, L_[:, i].clone())
 
     # multiply all interfaces together
     L_tilde = L_[:, 0]
@@ -260,7 +284,16 @@ def inc_vec_tmm_disp_lstack(
 
     T = 1 / (L_tilde[..., 0, 0] + np.finfo(float).eps)
 
-    return {"R": R, "T": T, "L": L_, 'coh_tmm_f':coh_res_f, 'coh_tmm_b':coh_res_b, 'P':P_, 'th_list':snell_theta}
+    result = {
+        "R": R,
+        "T": T,
+        "L": L_,
+        'coh_tmm_f': coh_res_f,
+        'coh_tmm_b': coh_res_b,
+        'P': P_,
+        'th_list': snell_theta,
+    }
+    return _to_numpy(result) if return_numpy else result
 
 
 def sanity_checker(input):
@@ -268,7 +301,40 @@ def sanity_checker(input):
         1.0 >= input.any() >= 0.0
     ).item(), "Some values are out of the accepted range of [0,1]"
 
+
 def get_imask(mask, n_layers):
-    mask = [item for sublist in mask for item in sublist]
-    imask = np.isin(np.arange(n_layers, dtype=int), mask, invert=True)
+    if not isinstance(mask, (list, tuple)):
+        raise ValueError('mask must be a sequence of coherent substacks')
+
+    coherent_layers = []
+    previous_end = None
+    for substack in mask:
+        if not isinstance(substack, (list, tuple, np.ndarray)) or len(substack) == 0:
+            raise ValueError('mask substacks must be non-empty sequences of layer indices')
+        if any(isinstance(index, (bool, np.bool_)) or not isinstance(index, (int, np.integer))
+               for index in substack):
+            raise ValueError('mask layer indices must be integers')
+
+        substack = list(substack)
+        if substack != list(range(substack[0], substack[-1] + 1)):
+            raise ValueError('mask substacks must contain contiguous, increasing layer indices')
+        if substack[0] <= 0 or substack[-1] >= n_layers - 1:
+            raise ValueError('mask may contain only interior layer indices')
+        if previous_end is not None and substack[0] <= previous_end + 1:
+            raise ValueError('mask substacks must be ordered, disjoint and separated')
+
+        coherent_layers.extend(substack)
+        previous_end = substack[-1]
+
+    imask = np.isin(np.arange(n_layers, dtype=int), coherent_layers, invert=True)
     return np.arange(n_layers, dtype=int)[imask]
+
+
+def _to_numpy(value):
+    if torch.is_tensor(value):
+        return converter2numpy(value)
+    if isinstance(value, dict):
+        return {key: _to_numpy(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_to_numpy(item) for item in value]
+    return value

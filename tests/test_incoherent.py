@@ -1,425 +1,205 @@
 import numpy as np
+import pytest
 import torch
+
+from tmm import inc_tmm
+
 from tmm_fast import inc_tmm as inc_tmm_fast
-import matplotlib.pyplot as plt
 
-from tmm import inc_tmm 
+POLARIZATIONS = ['s', 'p']
 
-def test_incoherent_input_output_medium():
-    n_wl = 65
-    n_th = 45
+# every test here loops the scalar reference over a full angle x wavelength grid
+pytestmark = pytest.mark.slow
+
+
+def grid(n_wl, n_theta, max_angle):
     wl = torch.linspace(400, 1200, n_wl) * (10**(-9))
-    theta = torch.linspace(0, 89, n_th) * (np.pi/180)
-    num_layers = 2
-    num_stacks = 2
-    mask = []
+    theta = torch.linspace(0, max_angle, n_theta) * (np.pi/180)
+    return wl, theta
 
-    #create m
+
+def alternating_stack(num_layers, num_stacks, wl, k_odd=0.0, k_even=0.0):
+    """A batch of identical stacks alternating between n=1.46 and n=2.56, optionally absorbing."""
     M = torch.ones((num_stacks, num_layers, wl.shape[0])).type(torch.complex128)
-    for i in range(1, M.shape[1]-1):
-        if np.mod(i, 2) == 1:
+    for i in range(1, num_layers - 1):
+        if i % 2 == 1:
             M[:, i, :] *= 1.46
+            M[:, i, :] += k_odd * 1j
         else:
             M[:, i, :] *= 2.56
-
-    #create t
-    max_t = 150 * (10**(-9))
-    min_t = 10 * (10**(-9))
-    T = (max_t - min_t) * np.random.uniform(0, 1, (M.shape[0], M.shape[1])) + min_t
-
-    T[:, 0] = np.inf
-    T[:, 1] = np.inf
-
-    T = torch.from_numpy(T)
-    O_fast_s = inc_tmm_fast('s', M, T, mask, theta, wl, device='cpu')
-    O_fast_p = inc_tmm_fast('p', M, T, mask, theta, wl, device='cpu')
-
-    R_tmm_s = torch.zeros((n_th, n_wl))
-    R_tmm_p = torch.zeros((n_th, n_wl))
-    T_tmm_s = torch.zeros((n_th, n_wl))
-    T_tmm_p = torch.zeros((n_th, n_wl))
-
-    T_list = T[0].tolist()
-
-    for i, t in enumerate(theta.tolist()):
-        for j, w in enumerate(wl.tolist()):
-            res_s = inc_tmm('s', M[0][:, j].tolist(), T_list, ['i', 'i'], t, w)
-            res_p = inc_tmm('p', M[0][:, j].tolist(), T_list, ['i', 'i'], t, w)
-            R_tmm_s[i, j] = res_s['R']
-            R_tmm_p[i, j] = res_p['R']
-            T_tmm_s[i, j] = res_s['T']
-            T_tmm_p[i, j] = res_p['T']
-
-    if torch.cuda.is_available():
-        O_fast_s_gpu = inc_tmm_fast('s', M, T, mask, theta, wl, device='cuda')
-        O_fast_p_gpu = inc_tmm_fast('p', M, T, mask, theta, wl, device='cuda')
-
-        assert O_fast_s_gpu, 'gpu computation not availabla'
-        assert torch.allclose(R_tmm_s, O_fast_s_gpu['R'])
-        assert torch.allclose(R_tmm_p, O_fast_p_gpu['R'])
-        assert torch.allclose(T_tmm_s, O_fast_s_gpu['T'])
-        assert torch.allclose(T_tmm_p, O_fast_p_gpu['T'])
-
-    assert torch.allclose(R_tmm_s, O_fast_s['R'])
-    assert torch.allclose(R_tmm_p, O_fast_p['R'])
-    assert torch.allclose(T_tmm_s, O_fast_s['T'])
-    assert torch.allclose(T_tmm_p, O_fast_p['T'])
+            M[:, i, :] += k_even * 1j
+    return M
 
 
-def test_fully_incoherent_stack():
-    n_wl = 65
-    n_th = 45
-    wl = torch.linspace(400, 1200, n_wl) * (10**(-9))
-    theta = torch.linspace(0, 89, n_th) * (np.pi/180)
-    num_layers = 5
-    num_stacks = 2
-    mask = []
+def thicknesses(values, num_stacks):
+    return torch.tensor([list(values)] * num_stacks, dtype=torch.double)
 
-    #create m
-    M = torch.ones((num_stacks, num_layers, wl.shape[0])).type(torch.complex128)
-    for i in range(1, M.shape[1]-1):
-        if np.mod(i, 2) == 1:
-            M[:, i, :] *= 1.46
+
+def reference(pol, N, T, imask, theta, wl):
+    """R and T from the scalar tmm package over the complete stack/angle/wavelength grid."""
+    shape = (N.shape[0], theta.shape[0], wl.shape[0])
+    R = torch.zeros(shape, dtype=torch.double)
+    transmission = torch.zeros(shape, dtype=torch.double)
+    for stack in range(N.shape[0]):
+        thickness = T[stack].tolist()
+        for i, t in enumerate(theta.tolist()):
+            for j, w in enumerate(wl.tolist()):
+                indices = N[stack, :, j] if N.ndim == 3 else N[stack]
+                result = inc_tmm(pol, indices.tolist(), thickness, imask, t, w)
+                R[stack, i, j] = result['R']
+                transmission[stack, i, j] = result['T']
+    return R, transmission
+
+
+def check_against_reference(pol, N, T, mask, imask, theta, wl, numpy_input=False,
+                            check_cuda=True, rtol=1e-10, atol=1e-12):
+    """
+    Compares inc_tmm against the scalar reference for every stack of the batch.
+
+    The tolerances used to be 1e-5, which is what hid the single precision the whole path ran
+    in. Agreement is now 8.3e-15 at worst across these configurations.
+    """
+    R_reference, T_reference = reference(pol, N, T, imask, theta, wl)
+    devices = ['cpu']
+    if check_cuda and torch.cuda.is_available():
+        devices.append('cuda')
+
+    for device in devices:
+        if numpy_input:
+            fast = inc_tmm_fast(
+                pol, N.numpy(), T.numpy(), mask, theta.numpy(), wl.numpy(), device=device
+            )
+            assert isinstance(fast['R'], np.ndarray)
+            assert isinstance(fast['T'], np.ndarray)
+            assert isinstance(fast['L'], np.ndarray)
+            assert isinstance(fast['th_list'], np.ndarray)
         else:
-            M[:, i, :] *= 2.56
-
-    #create t
-    max_t = 150000 * (10**(-9))
-    min_t = 10000 * (10**(-9))
-    T = (max_t - min_t) * np.random.uniform(0, 1, (M.shape[0], M.shape[1])) + min_t
-
-    T[:, 0] = np.inf
-    T[:, 1] = 10000e-9
-    T[:, 2] = 2000e-9
-    T[:, 3] = 5000e-9
-    T[:, -1] = np.inf
-
-    T = torch.from_numpy(T)
-    O_fast_s = inc_tmm_fast('s', M, T, mask, theta, wl, device='cpu')
-    O_fast_p = inc_tmm_fast('p', M, T, mask, theta, wl, device='cpu')
-
-    R_tmm_s = torch.zeros((n_th, n_wl))
-    R_tmm_p = torch.zeros((n_th, n_wl))
-    T_tmm_s = torch.zeros((n_th, n_wl))
-    T_tmm_p = torch.zeros((n_th, n_wl))
-
-    T_list = T[0].tolist()
-
-    for i, t in enumerate(theta.tolist()):
-        for j, w in enumerate(wl.tolist()):
-            res_s = inc_tmm('s', M[0][:, j].tolist(), T_list, ['i', 'i', 'i', 'i', 'i'], t, w)
-            res_p = inc_tmm('p', M[0][:, j].tolist(), T_list, ['i', 'i', 'i', 'i', 'i'], t, w)
-            R_tmm_s[i, j] = res_s['R']
-            R_tmm_p[i, j] = res_p['R']
-            T_tmm_s[i, j] = res_s['T']
-            T_tmm_p[i, j] = res_p['T']
-
-    if torch.cuda.is_available():
-        O_fast_s_gpu = inc_tmm_fast('s', M, T, mask, theta, wl, device='cuda')
-        O_fast_p_gpu = inc_tmm_fast('p', M, T, mask, theta, wl, device='cuda')
-
-        assert O_fast_s_gpu, 'gpu computation not availabla'
-        assert torch.allclose(R_tmm_s, O_fast_s_gpu['R'])
-        assert torch.allclose(R_tmm_p, O_fast_p_gpu['R'])
-        assert torch.allclose(T_tmm_s, O_fast_s_gpu['T'])
-        assert torch.allclose(T_tmm_p, O_fast_p_gpu['T'])
-
-    assert torch.allclose(R_tmm_s, O_fast_s['R'])
-    assert torch.allclose(R_tmm_p, O_fast_p['R'])
-    assert torch.allclose(T_tmm_s, O_fast_s['T'])
-    assert torch.allclose(T_tmm_p, O_fast_p['T'])
+            fast = inc_tmm_fast(pol, N, T, mask, theta, wl, device=device)
+        R = torch.as_tensor(fast['R']).cpu()
+        transmission = torch.as_tensor(fast['T']).cpu()
+        assert R.shape == R_reference.shape, (device, R.shape)
+        assert (R.isnan() == R_reference.isnan()).all(), device
+        assert (transmission.isnan() == T_reference.isnan()).all(), device
+        torch.testing.assert_close(R_reference, R, rtol=rtol, atol=atol, equal_nan=True)
+        torch.testing.assert_close(T_reference, transmission, rtol=rtol, atol=atol, equal_nan=True)
 
 
-def test_coherent_stack_with_incoherent_surrounding():
-    n_wl = 20
-    n_th = 45
-    wl = torch.linspace(400, 1200, n_wl) * (10**(-9))
-    theta = torch.linspace(0, 85, n_th) * (np.pi/180)
-    num_layers = 5
-    num_stacks = 2
-    mask = [[1, 2, 3]]
-
-    #create m
-    M = torch.ones((num_stacks, num_layers, wl.shape[0])).type(torch.complex128)
-    for i in range(1, M.shape[1]-1):
-        if np.mod(i, 2) == 1:
-            M[:, i, :] *= 1.46
-        else:
-            M[:, i, :] *= 2.56
-
-    #create t
-    max_t = 150 * (10**(-9))
-    min_t = 10 * (10**(-9))
-    T = (max_t - min_t) * np.random.uniform(0, 1, (M.shape[0], M.shape[1])) + min_t
-
-    T[:, 0] = np.inf
-    T[:, 1] = 200e-9
-    T[:, 2] = 100e-9
-    T[:, 3] = 300e-9
-    T[:, 4] = np.inf
-
-    T = torch.from_numpy(T)
-    O_fast_s = inc_tmm_fast('s', M, T, mask, theta, wl, device='cpu')
-    O_fast_p = inc_tmm_fast('p', M, T, mask, theta, wl, device='cpu')
-
-    R_tmm_s = torch.zeros((n_th, n_wl))
-    R_tmm_p = torch.zeros((n_th, n_wl))
-    T_tmm_s = torch.zeros((n_th, n_wl))
-    T_tmm_p = torch.zeros((n_th, n_wl))
-
-    T_list = T[0].tolist()
-
-    for i, t in enumerate(theta.tolist()):
-        for j, w in enumerate(wl.tolist()):
-            res_s = inc_tmm('s', M[0][:, j].tolist(), T_list, ['i', 'c', 'c', 'c', 'i'], t, w)
-            res_p = inc_tmm('p', M[0][:, j].tolist(), T_list, ['i', 'c', 'c', 'c', 'i'], t, w)
-            R_tmm_s[i, j] = res_s['R']
-            R_tmm_p[i, j] = res_p['R']
-            T_tmm_s[i, j] = res_s['T']
-            T_tmm_p[i, j] = res_p['T']
-
-    if torch.cuda.is_available():
-        O_fast_s_gpu = inc_tmm_fast('s', M, T, mask, theta, wl, device='cuda')
-        O_fast_p_gpu = inc_tmm_fast('p', M, T, mask, theta, wl, device='cuda')
-
-        assert O_fast_s_gpu, 'gpu computation not available'
-        assert torch.allclose(R_tmm_s, O_fast_s_gpu['R'])
-        assert torch.allclose(R_tmm_p, O_fast_p_gpu['R'])
-        assert torch.allclose(T_tmm_s, O_fast_s_gpu['T'])
-        assert torch.allclose(T_tmm_p, O_fast_p_gpu['T'])
-
-    assert torch.allclose(R_tmm_s, O_fast_s['R'])
-    assert torch.allclose(R_tmm_p, O_fast_p['R'])
-    assert torch.allclose(T_tmm_s, O_fast_s['T'])
-    assert torch.allclose(T_tmm_p, O_fast_p['T'])
-    assert (torch.abs(O_fast_s['R'][0]-R_tmm_s) <1e-5).all().item()
-    assert (torch.abs(O_fast_p['R'][0]-R_tmm_p) <1e-5).all().item()
-    assert (torch.abs(O_fast_s['T'][0]-T_tmm_s) <1e-5).all().item()
-    assert (torch.abs(O_fast_p['T'][0]-T_tmm_p) <1e-5).all().item()
-
-def test_coherent_incoherent():
-    n_wl = 20
-    n_th = 45
-    wl = torch.linspace(400, 1200, n_wl) * (10**(-9))
-    theta = torch.linspace(0, 89, n_th) * (np.pi/180)
-    num_layers = 5
-    num_stacks = 2
-    mask = [[2, 3]]
-
-    #create m
-    M = torch.ones((num_stacks, num_layers, wl.shape[0])).type(torch.complex128)
-    for i in range(1, M.shape[1]-1):
-        if np.mod(i, 2) == 1:
-            M[:, i, :] *= 1.46
-        else:
-            M[:, i, :] *= 2.56
-
-    #create t
-    max_t = 150 * (10**(-9))
-    min_t = 10 * (10**(-9))
-    T = (max_t - min_t) * np.random.uniform(0, 1, (M.shape[0], M.shape[1])) + min_t
-
-    T[:, 0] = np.inf
-    T[:, 1] = 10000e-9
-    T[:, 2] = 100e-9
-    T[:, 3] = 300e-9
-    T[:, -1] = np.inf
-
-    T = torch.from_numpy(T)
-    O_fast_s = inc_tmm_fast('s', M, T, mask, theta, wl, device='cpu')
-    O_fast_p = inc_tmm_fast('p', M, T, mask, theta, wl, device='cpu')
-
-    R_tmm_s = torch.zeros((n_th, n_wl))
-    R_tmm_p = torch.zeros((n_th, n_wl))
-    T_tmm_s = torch.zeros((n_th, n_wl))
-    T_tmm_p = torch.zeros((n_th, n_wl))
-
-    T_list = T[0].tolist()
-
-    for i, t in enumerate(theta.tolist()):
-        for j, w in enumerate(wl.tolist()):
-            res_s = inc_tmm('s', M[0][:, j].tolist(), T_list, ['i', 'i', 'c', 'c', 'i'], t, w)
-            res_p = inc_tmm('p', M[0][:, j].tolist(), T_list, ['i', 'i', 'c', 'c', 'i'], t, w)
-            R_tmm_s[i, j] = res_s['R']
-            R_tmm_p[i, j] = res_p['R']
-            T_tmm_s[i, j] = res_s['T']
-            T_tmm_p[i, j] = res_p['T']
-
-    if torch.cuda.is_available():
-        O_fast_s_gpu = inc_tmm_fast('s', M, T, mask, theta, wl, device='cuda')
-        O_fast_p_gpu = inc_tmm_fast('p', M, T, mask, theta, wl, device='cuda')
-
-        assert O_fast_s_gpu, 'gpu computation not available'
-        assert torch.allclose(R_tmm_s, O_fast_s_gpu['R'])
-        assert torch.allclose(R_tmm_p, O_fast_p_gpu['R'])
-        assert torch.allclose(T_tmm_s, O_fast_s_gpu['T'])
-        assert torch.allclose(T_tmm_p, O_fast_p_gpu['T'])
-
-    assert torch.allclose(R_tmm_s, O_fast_s['R'])
-    assert torch.allclose(R_tmm_p, O_fast_p['R'])
-    assert torch.allclose(T_tmm_s, O_fast_s['T'])
-    assert torch.allclose(T_tmm_p, O_fast_p['T'])
-    assert (torch.abs(O_fast_s['R'][0]-R_tmm_s) <1e-5).all().item()
-    assert (torch.abs(O_fast_p['R'][0]-R_tmm_p) <1e-5).all().item()
-    assert (torch.abs(O_fast_s['T'][0]-T_tmm_s) <1e-5).all().item()
-    assert (torch.abs(O_fast_p['T'][0]-T_tmm_p) <1e-5).all().item()
-
-def test_absorbing_fully_incoherent():
-    n_wl = 65
-    n_th = 45
-    wl = torch.linspace(400, 1200, n_wl) * (10**(-9))
-    theta = torch.linspace(0, 89, n_th) * (np.pi/180)
-    num_layers = 5
-    num_stacks = 2
-    mask = []
-    imask = ['i', 'i', 'i', 'i', 'i']
-
-    #create m
-    M = torch.ones((num_stacks, num_layers, wl.shape[0])).type(torch.complex128)
-    for i in range(1, M.shape[1]-1):
-        if np.mod(i, 2) == 1:
-            M[:, i, :] *= 1.46
-            M[:, i, :] += .005j
-        else:
-            M[:, i, :] *= 2.56
-            M[:, i, :] += .002j
-
-    #create t
-    max_t = 150000 * (10**(-9))
-    min_t = 10000 * (10**(-9))
-    T = (max_t - min_t) * np.random.uniform(0, 1, (M.shape[0], M.shape[1])) + min_t
-
-    T[:, 0] = np.inf
-    T[:, 1] = 10000e-9
-    T[:, 2] = 2000e-9
-    T[:, 3] = 5000e-9
-    T[:, -1] = np.inf
-
-    T = torch.from_numpy(T)
-    O_fast_s = inc_tmm_fast('s', M, T, mask, theta, wl, device='cpu')
-    O_fast_p = inc_tmm_fast('p', M, T, mask, theta, wl, device='cpu')
-
-    R_tmm_s = torch.zeros((n_th, n_wl))
-    R_tmm_p = torch.zeros((n_th, n_wl))
-    T_tmm_s = torch.zeros((n_th, n_wl))
-    T_tmm_p = torch.zeros((n_th, n_wl))
-
-    T_list = T[0].tolist()
-
-    for i, t in enumerate(theta.tolist()):
-        for j, w in enumerate(wl.tolist()):
-            res_s = inc_tmm('s', M[0][:, j].tolist(), T_list, imask, t, w)
-            res_p = inc_tmm('p', M[0][:, j].tolist(), T_list, imask, t, w)
-            R_tmm_s[i, j] = res_s['R']
-            R_tmm_p[i, j] = res_p['R']
-            T_tmm_s[i, j] = res_s['T']
-            T_tmm_p[i, j] = res_p['T']
-
-    if torch.cuda.is_available():
-        O_fast_s_gpu = inc_tmm_fast('s', M, T, mask, theta, wl, device='cuda')
-        O_fast_p_gpu = inc_tmm_fast('p', M, T, mask, theta, wl, device='cuda')
-
-        assert O_fast_s_gpu, 'gpu computation not availabla'
-        assert torch.allclose(R_tmm_s, O_fast_s_gpu['R'])
-        assert torch.allclose(R_tmm_p, O_fast_p_gpu['R'])
-        assert torch.allclose(T_tmm_s, O_fast_s_gpu['T'])
-        assert torch.allclose(T_tmm_p, O_fast_p_gpu['T'])
-
-    assert torch.allclose(R_tmm_s, O_fast_s['R'])
-    assert torch.allclose(R_tmm_p, O_fast_p['R'])
-    assert torch.allclose(T_tmm_s, O_fast_s['T'])
-    assert torch.allclose(T_tmm_p, O_fast_p['T'])
-    
-    assert (O_fast_s['R'][0].isnan() == R_tmm_s.isnan()).all()
-    assert (O_fast_p['R'][0].isnan() == R_tmm_p.isnan()).all()
-    assert (O_fast_s['T'][0].isnan() == T_tmm_s.isnan()).all()
-    assert (O_fast_p['T'][0].isnan() == T_tmm_p.isnan()).all()
-
-    assert (torch.abs(O_fast_s['R'][0]-R_tmm_s) <1e-5).all().item()
-    assert (torch.abs(O_fast_p['R'][0]-R_tmm_p) <1e-5).all().item()
-    assert (torch.abs(O_fast_s['T'][0]-T_tmm_s) <1e-5).all().item()
-    assert (torch.abs(O_fast_p['T'][0]-T_tmm_p) <1e-5).all().item()
-
-def test_absorbing_coherent_incoherent():
-    n_wl = 20
-    n_th = 45
-    wl = torch.linspace(400, 1200, n_wl) * (10**(-9))
-    theta = torch.linspace(0, 85, n_th) * (np.pi/180)
-    num_layers = 5
-    num_stacks = 2
-    mask = [[2, 3]]
-    imask = ['i', 'i', 'c', 'c', 'i']
-
-    #create m
-    M = torch.ones((num_stacks, num_layers, wl.shape[0])).type(torch.complex128)
-    for i in range(1, M.shape[1]-1):
-        if np.mod(i, 2) == 1:
-            M[:, i, :] *= 1.46
-            M[:, i, :] += .0005j
-        else:
-            M[:, i, :] *= 2.56
-            M[:, i, :] += .002j
-
-    #create t
-    max_t = 150 * (10**(-9))
-    min_t = 10 * (10**(-9))
-    T = (max_t - min_t) * np.random.uniform(0, 1, (M.shape[0], M.shape[1])) + min_t
-
-    T[:, 0] = np.inf
-    T[:, 1] = 10000e-9
-    T[:, 2] = 100e-9
-    T[:, 3] = 300e-9
-    T[:, -1] = np.inf
-
-    T = torch.from_numpy(T)
-    O_fast_s = inc_tmm_fast('s', M, T, mask, theta, wl, device='cpu')
-    O_fast_p = inc_tmm_fast('p', M, T, mask, theta, wl, device='cpu')
-
-    R_tmm_s = torch.zeros((n_th, n_wl))
-    R_tmm_p = torch.zeros((n_th, n_wl))
-    T_tmm_s = torch.zeros((n_th, n_wl))
-    T_tmm_p = torch.zeros((n_th, n_wl))
-
-    T_list = T[0].tolist()
-
-    for i, t in enumerate(theta.tolist()):
-        for j, w in enumerate(wl.tolist()):
-            res_s = inc_tmm('s', M[0][:, j].tolist(), T_list, imask, t, w)
-            res_p = inc_tmm('p', M[0][:, j].tolist(), T_list, imask, t, w)
-            R_tmm_s[i, j] = res_s['R']
-            R_tmm_p[i, j] = res_p['R']
-            T_tmm_s[i, j] = res_s['T']
-            T_tmm_p[i, j] = res_p['T']
-
-    if torch.cuda.is_available():
-        O_fast_s_gpu = inc_tmm_fast('s', M, T, mask, theta, wl, device='cuda')
-        O_fast_p_gpu = inc_tmm_fast('p', M, T, mask, theta, wl, device='cuda')
-
-        assert O_fast_s_gpu, 'gpu computation not available'
-        assert torch.allclose(R_tmm_s, O_fast_s_gpu['R'])
-        assert torch.allclose(R_tmm_p, O_fast_p_gpu['R'])
-        assert torch.allclose(T_tmm_s, O_fast_s_gpu['T'])
-        assert torch.allclose(T_tmm_p, O_fast_p_gpu['T'])
-
-    assert torch.allclose(R_tmm_s, O_fast_s['R'])
-    assert torch.allclose(R_tmm_p, O_fast_p['R'])
-    assert torch.allclose(T_tmm_s, O_fast_s['T'])
-    assert torch.allclose(T_tmm_p, O_fast_p['T'])
-
-    assert (O_fast_s['R'][0].isnan() == R_tmm_s.isnan()).all()
-    assert (O_fast_p['R'][0].isnan() == R_tmm_p.isnan()).all()
-    assert (O_fast_s['T'][0].isnan() == T_tmm_s.isnan()).all()
-    assert (O_fast_p['T'][0].isnan() == T_tmm_p.isnan()).all()
-
-    assert (torch.abs(O_fast_s['R'][0]-R_tmm_s) <1e-5).all().item()
-    assert (torch.abs(O_fast_p['R'][0]-R_tmm_p) <1e-5).all().item()
-    assert (torch.abs(O_fast_s['T'][0]-T_tmm_s) <1e-5).all().item()
-    assert (torch.abs(O_fast_p['T'][0]-T_tmm_p) <1e-5).all().item()
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+def test_incoherent_input_output_medium(pol):
+    wl, theta = grid(n_wl=65, n_theta=45, max_angle=89)
+    M = alternating_stack(num_layers=2, num_stacks=2, wl=wl)
+    T = thicknesses([np.inf, np.inf], num_stacks=2)
+    check_against_reference(pol, M, T, [], ['i', 'i'], theta, wl)
 
 
-if __name__=='__main__':
-    test_incoherent_input_output_medium()
-    test_coherent_stack_with_incoherent_surrounding()
-    test_coherent_incoherent()
-    test_absorbing_fully_incoherent()
-    test_absorbing_coherent_incoherent()
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+def test_incoherent_numpy_input_output_medium(pol):
+    wl, theta = grid(n_wl=65, n_theta=45, max_angle=89)
+    M = alternating_stack(num_layers=2, num_stacks=2, wl=wl)
+    T = thicknesses([np.inf, np.inf], num_stacks=2)
+    check_against_reference(pol, M, T, [], ['i', 'i'], theta, wl,
+                            numpy_input=True, check_cuda=False)
+
+
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+def test_dispersionless_incoherent_stack(pol):
+    wl, theta = grid(n_wl=3, n_theta=2, max_angle=50)
+    M = torch.tensor([[1.0, 1.7 + 0.01j, 1.5]], dtype=torch.complex128)
+    T = thicknesses([np.inf, 2e-6, np.inf], num_stacks=1)
+
+    check_against_reference(pol, M, T, [], ['i'] * 3, theta, wl, check_cuda=False)
+
+
+@pytest.mark.parametrize(
+    'mask',
+    [
+        pytest.param([[1, 3]], id='noncontiguous-substack'),
+        pytest.param([[5]], id='out-of-bounds-layer'),
+        pytest.param([[2, 1]], id='reversed-substack'),
+        pytest.param([[1, 2], [2, 3]], id='overlapping-substacks'),
+    ],
+)
+def test_invalid_coherent_mask_is_rejected(mask):
+    wl, theta = grid(n_wl=2, n_theta=1, max_angle=0)
+    M = alternating_stack(num_layers=5, num_stacks=1, wl=wl)
+    T = thicknesses([np.inf, 100e-9, 150e-9, 120e-9, np.inf], num_stacks=1)
+
+    with pytest.raises(ValueError, match='mask'):
+        inc_tmm_fast('s', M, T, mask, theta, wl)
+
+
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+def test_fully_incoherent_stack(pol):
+    wl, theta = grid(n_wl=65, n_theta=45, max_angle=89)
+    M = alternating_stack(num_layers=5, num_stacks=2, wl=wl)
+    T = thicknesses([np.inf, 10000e-9, 2000e-9, 5000e-9, np.inf], num_stacks=2)
+    check_against_reference(pol, M, T, [], ['i'] * 5, theta, wl)
+
+
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+def test_coherent_stack_with_incoherent_surrounding(pol):
+    wl, theta = grid(n_wl=20, n_theta=45, max_angle=85)
+    M = alternating_stack(num_layers=5, num_stacks=2, wl=wl)
+    T = thicknesses([np.inf, 200e-9, 100e-9, 300e-9, np.inf], num_stacks=2)
+    check_against_reference(pol, M, T, [[1, 2, 3]], ['i', 'c', 'c', 'c', 'i'], theta, wl)
+
+
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+def test_coherent_incoherent(pol):
+    wl, theta = grid(n_wl=20, n_theta=45, max_angle=89)
+    M = alternating_stack(num_layers=5, num_stacks=2, wl=wl)
+    T = thicknesses([np.inf, 10000e-9, 100e-9, 300e-9, np.inf], num_stacks=2)
+    check_against_reference(pol, M, T, [[2, 3]], ['i', 'i', 'c', 'c', 'i'], theta, wl)
+
+
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+def test_absorbing_fully_incoherent(pol):
+    wl, theta = grid(n_wl=65, n_theta=45, max_angle=89)
+    M = alternating_stack(num_layers=5, num_stacks=2, wl=wl, k_odd=.005, k_even=.002)
+    T = thicknesses([np.inf, 10000e-9, 2000e-9, 5000e-9, np.inf], num_stacks=2)
+    check_against_reference(pol, M, T, [], ['i'] * 5, theta, wl)
+
+
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+def test_absorbing_coherent_incoherent(pol):
+    wl, theta = grid(n_wl=20, n_theta=45, max_angle=85)
+    M = alternating_stack(num_layers=5, num_stacks=2, wl=wl, k_odd=.0005, k_even=.002)
+    T = thicknesses([np.inf, 10000e-9, 100e-9, 300e-9, np.inf], num_stacks=2)
+    check_against_reference(pol, M, T, [[2, 3]], ['i', 'i', 'c', 'c', 'i'], theta, wl)
+
+
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+@pytest.mark.parametrize('absorption', [0.0, 0.02])
+def test_dispersive_injection_medium_for_coherent_substack(pol, absorption):
+    """Each substack must use its own incident angle at every stack and wavelength."""
+    wl, theta = grid(n_wl=7, n_theta=5, max_angle=75)
+    M = torch.ones((2, 5, wl.shape[0]), dtype=torch.complex128)
+    dispersion = torch.linspace(0.0, 0.5, wl.shape[0], dtype=torch.float64)
+    M[0, 1] = 1.25 + dispersion + absorption * 1j
+    M[1, 1] = 1.90 - 0.6 * dispersion + absorption * 1j
+    M[:, 2] = 2.35 - 0.2 * dispersion
+    M[:, 3] = 1.40 + 0.15 * dispersion
+    T = thicknesses([np.inf, 4000e-9, 120e-9, 210e-9, np.inf], num_stacks=2)
+
+    check_against_reference(
+        pol, M, T, [[2, 3]], ['i', 'i', 'c', 'c', 'i'], theta, wl
+    )
+
+
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+@pytest.mark.parametrize('extinction', [10.0, 100.0])
+def test_strongly_absorbing_incoherent_layer_stays_finite(pol, extinction):
+    wl, theta = grid(n_wl=5, n_theta=4, max_angle=70)
+    M = torch.ones((2, 3, wl.shape[0]), dtype=torch.complex128)
+    M[0, 1] = 1.5 + extinction * 1j
+    M[1, 1] = 2.0 + 2 * extinction * 1j
+    T = thicknesses([np.inf, 10000e-9, np.inf], num_stacks=2)
+
+    check_against_reference(pol, M, T, [], ['i'] * 3, theta, wl)
+    result = inc_tmm_fast(pol, M, T, [], theta, wl)
+    assert torch.isfinite(result['R']).all()
+    assert torch.isfinite(result['T']).all()
+
+
+if __name__ == '__main__':
+    raise SystemExit(pytest.main([__file__, '-q']))

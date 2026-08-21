@@ -2,17 +2,17 @@ import numpy as np
 from numpy import pi
 import torch
 
-from typing import Union
+from typing import Optional, Union
 import sys
 from warnings import warn
 EPSILON = sys.float_info.epsilon
 
 def coh_vec_tmm_disp_mstack(pol:str,
-                            N:Union[np.ndarray, torch.Tensor], 
-                            T:Union[np.ndarray, torch.Tensor], 
-                            Theta:Union[np.ndarray, torch.Tensor], 
-                            lambda_vacuum:Union[np.ndarray, torch.Tensor], 
-                            device:str='cpu', 
+                            N:Union[np.ndarray, torch.Tensor, list, tuple],
+                            T:Union[np.ndarray, torch.Tensor, list, tuple],
+                            Theta:Union[np.ndarray, torch.Tensor, list, tuple, float],
+                            lambda_vacuum:Union[np.ndarray, torch.Tensor, list, tuple, float],
+                            device:Optional[Union[str, torch.device]]=None,
                             timer:bool=False) -> dict:
     """
     Parallelized computation of reflection and transmission for coherent light spectra that traverse
@@ -21,9 +21,8 @@ def coh_vec_tmm_disp_mstack(pol:str,
      - GPU accelerated computations
      - To compute gradients regarding the multilayer thin-film (i.e. N, T) thanks to Pytorch Autograd
 
-    However, the input can also be a numpy array format.
-    Although all internal computations are processed via PyTorch, the output data is converted to numpy arrays again.
-    Hence, the use of numpy input may increase computation time due to data type conversions.
+    Inputs may mix tensors, numpy arrays and plain array-like values. Outputs remain tensors when
+    any input is a tensor; otherwise they are converted to numpy arrays.
 
     Parameters:
     -----------
@@ -33,20 +32,23 @@ def coh_vec_tmm_disp_mstack(pol:str,
         PyTorch Tensor or numpy array of shape [S x L x W] with complex or real entries which contain the refractive
         indices at the wavelengths of interest:
         S is the number of multi-layer thin films, L is the number of layers for each thin film, W is the number of
-        wavelength considered. Note that the first and last layer must feature real valued ()
-        refractive indicies, i.e. imag(N[:, 0, :]) = 0 and imag(N[:, -1, :]) = 0.
+        wavelength considered. Note that the first and last layer must feature real valued refractive indicies, i.e.
+        imag(N[:, 0, :]) = 0 and imag(N[:, -1, :]) = 0.
+        
     T : Tensor or array
-        Holds the layer thicknesses of the individual layers for a bunch of thin films in nanometer.
+        Layer thicknesses in metres for the individual thin-film stacks.
         T is of shape [S x L] with real-valued entries; infinite values are allowed for the first and last layers only!
     Theta : Tensor or array
-        Theta is a tensor or array that determines the angles with which the light propagates in the injection layer.
-        Theta is of shape [A] and holds the incidence angles [rad] in its entries.
+        Theta determines the angles with which the light propagates in the injection layer.
+        It normally has shape [A]. A precomputed angle grid of shape [S x A x W] is also
+        accepted, which is useful when this solver evaluates a substack entered from a
+        dispersive medium.
     lambda_vacuum : Tensor or numpy array
         Vacuum wavelengths for which reflection and transmission are computed given a bunch of thin films.
-        It is of shape [W] and holds the wavelengths in nanometer.
-    device : Str
-        Computation device, accepts ether 'cuda' or 'cpu'; GPU acceleration can lower the computational time especially
-        for computation involving large tensors
+        It is of shape [W] and holds the wavelengths in metres.
+    device : str, torch.device or None
+        Computation device. When omitted, the device is inferred from N if N is a tensor and
+        otherwise defaults to CPU.
     timer: Boolean
         Determines whether to track times for data pushing on CPU or GPU and total computation time; see output
         information for details on how to read out time
@@ -101,33 +103,32 @@ def coh_vec_tmm_disp_mstack(pol:str,
     if timer:
         import time
         starttime = time.time()
-    datatype = check_datatype(N, T, lambda_vacuum, Theta)
-    # check uniform data types (e.g. only np.array or torch.tensor) -> save this type
-    N = converter(N, device)
-    T = converter(T, device)
-    lambda_vacuum = converter(lambda_vacuum, device)
-    Theta = converter(Theta, device)
-    squeezed_N = False
-    squeezed_T = False
-    if N.ndim < 3:
-        squeezed_N = True
-        N = N.unsqueeze(0)
-    if T.ndim < 2:
-        squeezed_T = True
+    return_numpy = not any(torch.is_tensor(value) for value in (N, T, Theta, lambda_vacuum))
+    device = resolve_device(N, device)
+    N = converter2torch(N, device)
+    T = converter2torch(T, device)
+    lambda_vacuum = torch.atleast_1d(converter2torch(lambda_vacuum, device))
+    Theta = torch.atleast_1d(converter2torch(Theta, device))
+    # T tells a single stack, of shape [L], apart from a batch of them, of shape [S x L].
+    # N follows suit and may additionally come without the wavelength axis if the materials
+    # are dispersionless, i.e. [L] or [S x L] instead of [L x W] or [S x L x W].
+    assert T.ndim in (1, 2), 'T is not of shape [L] (1d) or [S x L] (2d), as it is of dimension ' + str(T.ndim)
+    squeezed = T.ndim == 1
+    if squeezed:
         T = T.unsqueeze(0)
-    assert squeezed_N == squeezed_T, 'N and T are not of same shape, as they are of dimensions ' + str(N.ndim) + ' and ' + str(T.ndim)
+        N = N.unsqueeze(0)
+    assert N.ndim in (2, 3), 'N is not of shape [L], [L x W], [S x L] or [S x L x W], as it is of shape ' + str(tuple(N.shape))
     if timer:
         push_time = time.time() - starttime
     num_layers = T.shape[1]
     num_stacks = T.shape[0]
-    num_angles = Theta.shape[0]
+    num_angles = Theta.shape[0] if Theta.ndim == 1 else Theta.shape[1]
     num_wavelengths = lambda_vacuum.shape[0]
-    check_inputs(N, T, lambda_vacuum, Theta)
-    N.imag = torch.clamp(N.imag, max=35.)
-
-    # if a constant refractive index is used (no dispersion) extend the tensor
+    # a dispersionless N holds no wavelength axis yet, repeat it across the spectrum. This has
+    # to happen before check_inputs, which expects the full [S x L x W].
     if N.ndim == 2:
-       N = torch.tile(N, (num_wavelengths, 1)).T
+        N = N.unsqueeze(-1).repeat(1, 1, num_wavelengths)
+    check_inputs(N, T, lambda_vacuum, Theta)
 
     # SnellThetas is a tensor, for each stack and layer, the angle that the light travels
     # through the layer. Computed with Snell's law. Note that the "angles" may be complex!
@@ -141,16 +142,17 @@ def coh_vec_tmm_disp_mstack(pol:str,
     # wave. Positive imaginary part means decaying.
 
     # delta is the total phase accrued by traveling through a given layer.
-    # Ignore warning about inf multiplication
-
-
-    delta = torch.einsum('skij,sj->skij', kz_list, T)
+    # Only the inner layers accumulate phase. Forming it for the semi-infinite edges as well
+    # would multiply a finite wavevector by an infinite thickness, and while the forward pass
+    # drops those entries, the backward pass of the einsum computes 0 * inf = nan for the
+    # refractive indices of the edge layers.
+    delta = torch.einsum('skij,sj->skij', kz_list[:, :, :, 1:-1], T[:, 1:-1])
 
     # check for opacity. If too much of the optical power is absorbed in a layer
     # it can lead to numerical instability.
     if torch.any(delta.imag > 35.):
-        delta.imag = torch.clamp(delta.imag, max=35.)
-        warn('Opacity warning. The imaginary part of the refractive index is clamped to 35i for numerical stability.\n'+
+        delta = torch.complex(delta.real, delta.imag.clamp(max=35.))
+        warn('Opacity warning. The imaginary part of the phase thickness is clamped to 35 for numerical stability.\n'+
              'You might encounter problems with gradient computation...')
 
 
@@ -162,7 +164,7 @@ def coh_vec_tmm_disp_mstack(pol:str,
     
     # A ist the propagation term for matrix optic and holds the appropriate accumulated phase for the thickness
     # of each layer
-    A = torch.exp(1j * delta[:, :, :, 1:-1])
+    A = torch.exp(1j * delta)
     F = r_list[:, :, :, 1:]
     
     # M_list holds the transmission and reflection matrices from matrix-optics 
@@ -181,7 +183,7 @@ def coh_vec_tmm_disp_mstack(pol:str,
 
     # M_r0 accounts for the first and last stack where the translation coefficients are 1
     # todo: why compute separately?
-    M_r0 = torch.empty((num_stacks, num_angles, num_wavelengths, 2, 2), dtype=torch.cfloat, device=device)
+    M_r0 = torch.empty((num_stacks, num_angles, num_wavelengths, 2, 2), dtype=torch.complex128, device=device)
     M_r0[:, :, :, 0, 0] = 1
     M_r0[:, :, :, 0, 1] = r_list[:, :, :, 0]
     M_r0[:, :, :, 1, 0] = r_list[:, :, :, 0]
@@ -199,17 +201,17 @@ def coh_vec_tmm_disp_mstack(pol:str,
     R = R_from_r_vec(r)
     T = T_from_t_vec(pol, t, N[:, 0], N[:, -1], SnellThetas[:, :, 0], SnellThetas[:, :, -1])
 
-    if squeezed_T and r.shape[0] == 1:
+    if squeezed and r.shape[0] == 1:
         r = torch.reshape(r, (r.shape[1], r.shape[2]))
         R = torch.reshape(R, (R.shape[1], R.shape[2]))
         T = torch.reshape(T, (T.shape[1], T.shape[2]))
         t = torch.reshape(t, (t.shape[1], t.shape[2]))
 
-    if datatype is np.ndarray:
-        r = numpy_converter(r)
-        t = numpy_converter(t)
-        R = numpy_converter(R)
-        T = numpy_converter(T)
+    if return_numpy:
+        r = converter2numpy(r)
+        t = converter2numpy(t)
+        R = converter2numpy(R)
+        T = converter2numpy(T)
 
     if timer:
         total_time = time.time() - starttime
@@ -232,7 +234,18 @@ def SnellLaw_vectorized(n, th):
     th = th if th.dtype == torch.complex128 else th.type(torch.complex128)
     n = n if n.dtype == torch.complex128 else n.type(torch.complex128)
 
-    n0_ = torch.einsum('hk,j,hik->hjik', n[:,0], torch.sin(th), 1/n)
+    if th.ndim == 1:
+        n0_ = torch.einsum('hk,j,hik->hjik', n[:,0], torch.sin(th), 1/n)
+    elif th.ndim == 3:
+        # A substack embedded in a dispersive multilayer has a different incident angle for
+        # every stack and wavelength. Preserve that [S x A x W] grid instead of silently
+        # reusing stack 0 / wavelength 0.
+        n0_ = n[:, 0, None, None, :] * torch.sin(th[:, :, None, :]) / n[:, None, :, :]
+    else:
+        raise AssertionError(
+            'Theta is not of shape [A] (1d) or [S x A x W] (3d), as it is of shape '
+            + str(tuple(th.shape))
+        )
     angles = torch.asin(n0_)
     
     # The first and last entry need to be the forward angle (the intermediate
@@ -275,17 +288,15 @@ def is_not_forward_angle(n, theta):
     n = n.unsqueeze(1)
     ncostheta = torch.cos(theta) * n
     assert ncostheta.shape == theta.shape, 'ncostheta and theta shape doesnt match'
-    answer = torch.empty_like(ncostheta, dtype=torch.bool)
-    # Either evanescent decay or lossy medium. Either way, the one that
-    # decays is the forward-moving wave
-    answer = (abs(ncostheta.imag) > 100 * EPSILON) * (ncostheta.imag > 0)
-    # Forward is the one with positive Poynting vector
-    # Poynting vector is Re[n cos(theta)] for s-polarization or
-    # Re[n cos(theta*)] for p-polarization, but it turns out they're consistent
-    # so I'll just assume s then check both below
-    answer = (~(abs(ncostheta.imag) > 100 * EPSILON)) * (ncostheta.real > 0)
-
-    # answer = (~(abs(ncostheta.imag) > 100 * EPSILON)) * (ncostheta.real > 0)
+    # For evanescent decay or a lossy medium the decaying wave is the forward-moving one,
+    # everywhere else it is the one with a positive Poynting vector. The Poynting vector is
+    # Re[n cos(theta)] for s-polarization and Re[n cos(theta*)] for p-polarization, but the
+    # two agree, so assume s here and check both in the assertions below.
+    # Note that the criterion is the magnitude of the imaginary part, not its sign: a wave
+    # decaying with Im[n cos(theta)] < 0 is evanescent just the same, and testing the signed
+    # value instead sends it down the propagating branch and trips the assertions.
+    evanescent = abs(ncostheta.imag) > 100 * EPSILON
+    answer = torch.where(evanescent, ncostheta.imag > 0, ncostheta.real > 0)
 
     # Case Im(n) < 0
     assert (ncostheta.imag > -100 * EPSILON)[answer].all(), error_string
@@ -339,55 +350,6 @@ def is_not_forward_angle(n, theta):
     #             answer_tmm[i,j,k] = answer2
     
     # torch.testing.assert_close((~answer_tmm).type(torch.float), answer)
-
-    return answer
-
-def is_forward_angle(n, theta):
-    """
-    if a wave is traveling at angle theta from normal in a medium with index n,
-    calculate whether or not this is the forward-traveling wave (i.e., the one
-    going from front to back of the stack, like the incoming or outgoing waves,
-    but unlike the reflected wave). For real n & theta, the criterion is simply
-    -pi/2 < theta < pi/2, but for complex n & theta, it's more complicated.
-    See https://arxiv.org/abs/1603.02720 appendix D. If theta is the forward
-    angle, then (pi-theta) is the backward angle and vice-versa.
-    """
-    n = n.clone().detach().to(torch.cfloat)  # torch.tensor(n, dtype=torch.cfloat)
-    assert torch.all(n.real * n.imag >= 0), ("For materials with gain, it's ambiguous which "
-                                  "beam is incoming vs outgoing. See "
-                                  "https://arxiv.org/abs/1603.02720 Appendix C.\n"
-                                  "n: " + str(n) + "   angle: " + str(theta))
-    # assert n.dtype is not complex,  ("For materials with gain, it's ambiguous which "
-    #                               "beam is incoming vs outgoing. See "
-    #                               "https://arxiv.org/abs/1603.02720 Appendix C.\n"
-    #                               "n: " + str(n) + "   angle: " + str(theta))
-
-    ncostheta = n * torch.cos(theta)
-    ncostheta = ncostheta.clone().detach().to(torch.cfloat)  # torch.tensor(ncostheta, dtype=torch.cfloat)
-    if torch.all(abs(ncostheta.imag) > 100 * EPSILON):
-        # Either evanescent decay or lossy medium. Either way, the one that
-        # decays is the forward-moving wave
-        answer = (ncostheta.imag > 0)
-    else:
-        # Forward is the one with positive Poynting vector
-        # Poynting vector is Re[n cos(theta)] for s-polarization or
-        # Re[n cos(theta*)] for p-polarization, but it turns out they're consistent
-        # so I'll just assume s then check both below
-        answer = torch.any((ncostheta.real > 0))
-    # convert from numpy boolean to the normal Python boolean
-    answer = bool(answer)
-    # double-check the answer ... can't be too careful!
-    error_string = ("It's not clear which beam is incoming vs outgoing. Weird"
-                    " index maybe?\n"
-                    "n: " + str(n) + "   angle: " + str(theta))
-    if answer is True:
-        assert torch.all(ncostheta.imag > -100 * EPSILON), error_string
-        assert torch.all(ncostheta.real > -100 * EPSILON), error_string
-        assert torch.all((n * torch.cos(theta.conj())).real > -100 * EPSILON), error_string
-    else:
-        assert torch.all(ncostheta.imag < 100 * EPSILON), error_string
-        assert torch.all(ncostheta.real < 100 * EPSILON), error_string
-        assert torch.all((n * torch.cos(theta.conjugate())).real < 100 * EPSILON), error_string
     return answer
 
 def interface_r_vec(polarization, n_i, n_f, th_i, th_f):
@@ -467,7 +429,15 @@ def T_from_t_vec(pol, t, n_i, n_f, th_i, th_f):
     else:
         raise ValueError("Polarization must be 's' or 'p'")
 
-def converter(data:Union[np.ndarray, torch.Tensor], device:str) -> torch.Tensor:
+def resolve_device(data, device: Optional[Union[str, torch.device]]) -> torch.device:
+    if device is not None:
+        return torch.device(device)
+    if torch.is_tensor(data):
+        return data.device
+    return torch.device('cpu')
+
+
+def converter2torch(data, device: Union[str, torch.device]) -> torch.Tensor:
     '''
     Checks the datatype of data to torch.tensor and moves the tensor to the device.
 
@@ -478,20 +448,17 @@ def converter(data:Union[np.ndarray, torch.Tensor], device:str) -> torch.Tensor:
     device : str
         either 'cpu' or 'cuda'
     '''
-    if type(data) is not torch.Tensor:
-        if type(data) is np.ndarray:
-            data = torch.from_numpy(data.copy())
-        else:
-            raise ValueError('At least one of the inputs (i.e. N, Theta, ...) is not of type numpy.array or torch.Tensor!')
-    return data.type(torch.complex128).to(device)
+    if torch.is_tensor(data):
+        return data.to(device=device, dtype=torch.complex128)
+    try:
+        array = np.asarray(data)
+        return torch.as_tensor(array.copy(), dtype=torch.complex128, device=device)
+    except (TypeError, ValueError, RuntimeError) as error:
+        raise ValueError('Inputs must be tensors, numpy arrays, scalars, or array-like values') from error
 
-def numpy_converter(data:torch.Tensor)->np.ndarray:
+def converter2numpy(data:torch.Tensor)->np.ndarray:
     data = data.detach().cpu().numpy()
     return data
-
-def check_datatype(N, T, lambda_vacuum, Theta):
-    assert type(N) == type(T) == type(lambda_vacuum) == type(Theta), ValueError('All inputs (i.e. N, Theta, ...) must be of the same data type, i.e. numpy.ndarray or torch.Tensor!')
-    return type(N)
 
 def check_inputs(N, T, lambda_vacuum, theta):
     # check the dimensionalities of N:
@@ -502,16 +469,34 @@ def check_inputs(N, T, lambda_vacuum, theta):
     \nfound N.shape=' + str(N.shape) + ' and T.shape=' + str(T.shape) + ' instead!'
     assert T.shape[1] == N.shape[1], 'The number of thin-film layers (second dimension) of N and T must coincide, \
     \nfound N.shape=' + str(N.shape) + ' and T.shape=' + str(T.shape) + ' instead!'
-    # check the dimensionality of Theta:
-    assert theta.ndim == 1, 'Theta is not of shape [A] (1d), as it is of dimension ' + str(theta.ndim)
+    # check the dimensionality of Theta. The full grid is used internally for coherent
+    # substacks whose injection medium is dispersive.
+    assert theta.ndim in (1, 3), (
+        'Theta is not of shape [A] (1d) or [S x A x W] (3d), as it is of shape '
+        + str(tuple(theta.shape))
+    )
+    if theta.ndim == 3:
+        assert theta.shape[0] == N.shape[0], (
+            'The first dimension of a Theta grid must match the number of stacks, found '
+            + str(tuple(theta.shape)) + ' and N.shape=' + str(tuple(N.shape))
+        )
+        assert theta.shape[2] == N.shape[2], (
+            'The last dimension of a Theta grid must match the wavelengths, found '
+            + str(tuple(theta.shape)) + ' and N.shape=' + str(tuple(N.shape))
+        )
     # check the dimensionality of lambda_vacuum:
     assert lambda_vacuum.ndim == 1, 'lambda_vacuum is not of shape [W] (1d), as it is of dimension ' + str(lambda_vacuum.ndim)
     assert N.shape[-1] == lambda_vacuum.shape[0], 'The last dimension of N must coincide with the dimension of lambda_vacuum (W),\nfound N.shape[-1]=' + str(N.shape[-1]) + ' and lambda_vacuum.shape[0]=' + str(lambda_vacuum.shape[0]) + ' instead!'
     # check well defined property of refractive indicies for the first and last layer:
-    answer  = torch.all(abs((torch.einsum('ij,k->ijk', N[:, 0], torch.sin(theta)).imag)) < np.finfo(float).eps)
-    assert answer, 'Non well-defined refractive indicies detected for first layer, check index ' + torch.argwhere(
-        abs((torch.einsum('ij,k->ijk', N[:, 0], torch.sin(theta)).imag)) > np.finfo(float).eps
-    ) 
+    # n * sin(theta) is the same in every layer by Snell's law, so this cancels to rounding
+    # rather than exactly; comparing against a single epsilon makes the check fire on noise
+    if theta.ndim == 1:
+        injection = torch.einsum('ij,k->ijk', N[:, 0], torch.sin(theta)).imag.abs()
+    else:
+        injection = (N[:, 0, None, :] * torch.sin(theta)).imag.abs()
+    assert torch.all(injection < 100 * EPSILON), (
+        'Non well-defined refractive indicies detected for the first layer at index '
+        + str(torch.argwhere(injection >= 100 * EPSILON).tolist()))
     
     
     
