@@ -350,7 +350,6 @@ def is_not_forward_angle(n, theta):
     #             answer_tmm[i,j,k] = answer2
     
     # torch.testing.assert_close((~answer_tmm).type(torch.float), answer)
-
     return answer
 
 def interface_r_vec(polarization, n_i, n_f, th_i, th_f):
