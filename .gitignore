@@ -113,3 +113,8 @@ examples/benchmarks/kaggle/nannos*
 
 # include benchmarks results
 !examples/benchmarks/*/*.npz
+
+# ide files
+.vscode/*
+# figures written by tests/test_gym.py
+tests/render_output/

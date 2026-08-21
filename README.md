@@ -31,12 +31,23 @@ pip install git+https://github.com/MLResearchAtOSRAM/tmm_fast
 ```
 
 To work on `tmm_fast` itself, create the conda environment defined in [environment.yml](environment.yml).
-It installs the runtime dependencies, the test requirements and the package itself in editable mode:
+It installs the runtime dependencies and the package itself in editable mode. The test and notebook
+requirements are a separate `dev` dependency group, so they never reach anyone installing the
+released package:
 
 ```sh
 conda env create -f environment.yml
-conda activate tmm_fast
+conda activate tmmfast
+pip install --group dev
 ```
+
+Without conda, the same from a checkout:
+
+```sh
+pip install -e . --group dev
+```
+
+`--group` needs pip >= 25.1. Either way, `pytest tests/` then runs the suite.
 
 ## Unified functionality of tmm_fast: Sponge PyTorch functionality for free
 Parallelized computation of reflection and transmission for coherent light spectra that traverse

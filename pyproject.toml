@@ -42,7 +42,12 @@ dependencies = [
     "gymnasium",
 ]
 
-[project.optional-dependencies]
+[project.urls]
+Homepage = "https://github.com/MLResearchAtOSRAM/tmm_fast"
+Issues = "https://github.com/MLResearchAtOSRAM/tmm_fast/issues"
+Publication = "https://doi.org/10.1364/JOSAA.450928"
+
+[dependency-groups]
 dev = [
     "pytest",
     "tmm",  # scalar reference implementation the tests compare against
@@ -50,10 +55,10 @@ dev = [
     "ipykernel",
 ]
 
-[project.urls]
-Homepage = "https://github.com/MLResearchAtOSRAM/tmm_fast"
-Issues = "https://github.com/MLResearchAtOSRAM/tmm_fast/issues"
-Publication = "https://doi.org/10.1364/JOSAA.450928"
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# render() calls plt.show(), which the Agg backend the tests use cannot honour
+filterwarnings = ["ignore:FigureCanvasAgg is non-interactive"]
 
 [tool.setuptools.packages.find]
 include = ["tmm_fast*"]

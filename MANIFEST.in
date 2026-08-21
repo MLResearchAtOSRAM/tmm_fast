@@ -1,0 +1,4 @@
+# The sdist ships the test suite so downstream packagers can run it against a
+# build; the wheel never does, packages.find only picks up tmm_fast*.
+graft tests
+global-exclude *.py[cod]
