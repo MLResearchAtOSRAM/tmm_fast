@@ -44,7 +44,8 @@ def reference(pol, N, T, imask, theta, wl):
         thickness = T[stack].tolist()
         for i, t in enumerate(theta.tolist()):
             for j, w in enumerate(wl.tolist()):
-                result = inc_tmm(pol, N[stack, :, j].tolist(), thickness, imask, t, w)
+                indices = N[stack, :, j] if N.ndim == 3 else N[stack]
+                result = inc_tmm(pol, indices.tolist(), thickness, imask, t, w)
                 R[stack, i, j] = result['R']
                 transmission[stack, i, j] = result['T']
     return R, transmission
@@ -65,7 +66,13 @@ def check_against_reference(pol, N, T, mask, imask, theta, wl, numpy_input=False
 
     for device in devices:
         if numpy_input:
-            fast = inc_tmm_fast(pol, N.numpy(), T.numpy(), mask, theta, wl, device=device)
+            fast = inc_tmm_fast(
+                pol, N.numpy(), T.numpy(), mask, theta.numpy(), wl.numpy(), device=device
+            )
+            assert isinstance(fast['R'], np.ndarray)
+            assert isinstance(fast['T'], np.ndarray)
+            assert isinstance(fast['L'], np.ndarray)
+            assert isinstance(fast['th_list'], np.ndarray)
         else:
             fast = inc_tmm_fast(pol, N, T, mask, theta, wl, device=device)
         R = torch.as_tensor(fast['R']).cpu()
@@ -92,6 +99,33 @@ def test_incoherent_numpy_input_output_medium(pol):
     T = thicknesses([np.inf, np.inf], num_stacks=2)
     check_against_reference(pol, M, T, [], ['i', 'i'], theta, wl,
                             numpy_input=True, check_cuda=False)
+
+
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+def test_dispersionless_incoherent_stack(pol):
+    wl, theta = grid(n_wl=3, n_theta=2, max_angle=50)
+    M = torch.tensor([[1.0, 1.7 + 0.01j, 1.5]], dtype=torch.complex128)
+    T = thicknesses([np.inf, 2e-6, np.inf], num_stacks=1)
+
+    check_against_reference(pol, M, T, [], ['i'] * 3, theta, wl, check_cuda=False)
+
+
+@pytest.mark.parametrize(
+    'mask',
+    [
+        pytest.param([[1, 3]], id='noncontiguous-substack'),
+        pytest.param([[5]], id='out-of-bounds-layer'),
+        pytest.param([[2, 1]], id='reversed-substack'),
+        pytest.param([[1, 2], [2, 3]], id='overlapping-substacks'),
+    ],
+)
+def test_invalid_coherent_mask_is_rejected(mask):
+    wl, theta = grid(n_wl=2, n_theta=1, max_angle=0)
+    M = alternating_stack(num_layers=5, num_stacks=1, wl=wl)
+    T = thicknesses([np.inf, 100e-9, 150e-9, 120e-9, np.inf], num_stacks=1)
+
+    with pytest.raises(ValueError, match='mask'):
+        inc_tmm_fast('s', M, T, mask, theta, wl)
 
 
 @pytest.mark.parametrize('pol', POLARIZATIONS)

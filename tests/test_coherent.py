@@ -93,6 +93,16 @@ def test_absorbing_coherent_stack(pol):
 
 
 @pytest.mark.parametrize('pol', POLARIZATIONS)
+def test_thin_high_extinction_layer_matches_reference(pol):
+    wl = torch.tensor([600e-9], dtype=torch.double)
+    theta = torch.tensor([0.0], dtype=torch.double)
+    M = torch.tensor([1.0, 1.5 + 100j, 1.5], dtype=torch.complex128)[None, :, None]
+    T = torch.tensor([[np.inf, 0.1e-9, np.inf]], dtype=torch.double)
+
+    check_against_reference(pol, M, T, theta, wl)
+
+
+@pytest.mark.parametrize('pol', POLARIZATIONS)
 def test_total_internal_reflection(pol):
     # a dense injection layer radiating into air, with layers in between: past the critical angle
     # of 16.6 deg the exit wave is evanescent, and a lossless stack has to reflect everything

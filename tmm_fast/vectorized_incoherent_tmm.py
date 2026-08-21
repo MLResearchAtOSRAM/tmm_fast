@@ -66,11 +66,11 @@ def inc_vec_tmm_disp_lstack(
     Returns:
     --------
     dict : 
-        "R": torch.Tensor
+        "R": torch.Tensor or np.ndarray
             Reflectivity of the entire stack of incoherent and coherent layers
-        "T": torch.Tensor
+        "T": torch.Tensor or np.ndarray
             Transmissivity of the entire stack of incoherent and coherent layers
-        "L": torch.Tensor
+        "L": torch.Tensor or np.ndarray
             Interface matrices see Byrnes Eq. 28
         'coh_tmm_f': dict
             Forward result for the coherent substacks in order. The dict contains the
@@ -78,9 +78,9 @@ def inc_vec_tmm_disp_lstack(
         'coh_tmm_b': torch.Tensor
             Backward result for the coherent substacks in order. The dict contains the
             results of a normal coherent stack
-        'P': torch.Tensor
+        'P': torch.Tensor or np.ndarray
             Absorption in the incoherent layers
-        'th_list': torch.Tensor
+        'th_list': torch.Tensor or np.ndarray
             Complex angles according to snells law in all layers
 
     Example:
@@ -122,6 +122,9 @@ def inc_vec_tmm_disp_lstack(
     result_dict = inc_tmm_fast(pol, N, D, mask, th, wl, device='cpu')
 
     """
+    return_numpy = not any(
+        torch.is_tensor(value) for value in (N, D, theta, lambda_vacuum)
+    )
     device = resolve_device(N, device)
     N = converter2torch(N, device)
     D = converter2torch(D, device)
@@ -135,6 +138,8 @@ def inc_vec_tmm_disp_lstack(
     n_theta = len(theta)
     n_layers = D.shape[1]
     n_stack = D.shape[0]
+    if N.ndim == 2:
+        N = N.unsqueeze(-1).repeat(1, 1, n_lambda)
     imask = get_imask(mask, n_layers)
 
     coh_res_f = []
@@ -279,7 +284,16 @@ def inc_vec_tmm_disp_lstack(
 
     T = 1 / (L_tilde[..., 0, 0] + np.finfo(float).eps)
 
-    return {"R": R, "T": T, "L": L_, 'coh_tmm_f':coh_res_f, 'coh_tmm_b':coh_res_b, 'P':P_, 'th_list':snell_theta}
+    result = {
+        "R": R,
+        "T": T,
+        "L": L_,
+        'coh_tmm_f': coh_res_f,
+        'coh_tmm_b': coh_res_b,
+        'P': P_,
+        'th_list': snell_theta,
+    }
+    return _to_numpy(result) if return_numpy else result
 
 
 def sanity_checker(input):
@@ -287,7 +301,40 @@ def sanity_checker(input):
         1.0 >= input.any() >= 0.0
     ).item(), "Some values are out of the accepted range of [0,1]"
 
+
 def get_imask(mask, n_layers):
-    mask = [item for sublist in mask for item in sublist]
-    imask = np.isin(np.arange(n_layers, dtype=int), mask, invert=True)
+    if not isinstance(mask, (list, tuple)):
+        raise ValueError('mask must be a sequence of coherent substacks')
+
+    coherent_layers = []
+    previous_end = None
+    for substack in mask:
+        if not isinstance(substack, (list, tuple, np.ndarray)) or len(substack) == 0:
+            raise ValueError('mask substacks must be non-empty sequences of layer indices')
+        if any(isinstance(index, (bool, np.bool_)) or not isinstance(index, (int, np.integer))
+               for index in substack):
+            raise ValueError('mask layer indices must be integers')
+
+        substack = list(substack)
+        if substack != list(range(substack[0], substack[-1] + 1)):
+            raise ValueError('mask substacks must contain contiguous, increasing layer indices')
+        if substack[0] <= 0 or substack[-1] >= n_layers - 1:
+            raise ValueError('mask may contain only interior layer indices')
+        if previous_end is not None and substack[0] <= previous_end + 1:
+            raise ValueError('mask substacks must be ordered, disjoint and separated')
+
+        coherent_layers.extend(substack)
+        previous_end = substack[-1]
+
+    imask = np.isin(np.arange(n_layers, dtype=int), coherent_layers, invert=True)
     return np.arange(n_layers, dtype=int)[imask]
+
+
+def _to_numpy(value):
+    if torch.is_tensor(value):
+        return converter2numpy(value)
+    if isinstance(value, dict):
+        return {key: _to_numpy(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_to_numpy(item) for item in value]
+    return value

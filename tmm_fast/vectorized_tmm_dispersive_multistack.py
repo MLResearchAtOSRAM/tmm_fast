@@ -129,10 +129,6 @@ def coh_vec_tmm_disp_mstack(pol:str,
     if N.ndim == 2:
         N = N.unsqueeze(-1).repeat(1, 1, num_wavelengths)
     check_inputs(N, T, lambda_vacuum, Theta)
-    # out of place on purpose: converter2torch hands back the caller's own tensor whenever it
-    # already is complex128 on the right device, so an in-place clamp would edit their array
-    # and, for a leaf that requires grad, raise instead of differentiating
-    N = torch.complex(N.real, N.imag.clamp(max=35.))
 
     # SnellThetas is a tensor, for each stack and layer, the angle that the light travels
     # through the layer. Computed with Snell's law. Note that the "angles" may be complex!
@@ -156,7 +152,7 @@ def coh_vec_tmm_disp_mstack(pol:str,
     # it can lead to numerical instability.
     if torch.any(delta.imag > 35.):
         delta = torch.complex(delta.real, delta.imag.clamp(max=35.))
-        warn('Opacity warning. The imaginary part of the refractive index is clamped to 35i for numerical stability.\n'+
+        warn('Opacity warning. The imaginary part of the phase thickness is clamped to 35 for numerical stability.\n'+
              'You might encounter problems with gradient computation...')
 
 

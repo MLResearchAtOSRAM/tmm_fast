@@ -55,14 +55,17 @@ def load(name, wl, complex_n=True):
     Raises:
     -------
     ValueError
-        If the material is unknown, or if wl was not given in meter
+        If the material is unknown, if wavelengths are not finite and positive, or if wl was not
+        given in meter
     """
     wl = np.asarray(wl, dtype=float).reshape(-1)
     if wl.size == 0:
         raise ValueError('wl must hold at least one wavelength')
-    if np.nanmax(wl) > _IMPLAUSIBLE_WAVELENGTH:
+    if not np.isfinite(wl).all() or (wl <= 0).any():
+        raise ValueError('wl must hold only finite, positive wavelengths')
+    if wl.max() > _IMPLAUSIBLE_WAVELENGTH:
         raise ValueError('wl must be given in meter but holds values up to '
-                         + str(np.nanmax(wl)) + '; for wavelengths in nanometer pass wl * 1e-9')
+                         + str(wl.max()) + '; for wavelengths in nanometer pass wl * 1e-9')
     with _datafile(name).open('r') as datafile:
         table = np.loadtxt(datafile)
     table = table[np.argsort(table[:, 0])]  # np.interp requires ascending wavelengths
