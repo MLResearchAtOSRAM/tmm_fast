@@ -122,6 +122,7 @@ def inc_vec_tmm_disp_lstack(
     """
     N = converter2torch(N, device)
     D = converter2torch(D, device)
+    theta = converter2torch(theta, device)
     # torch.linspace hands out float32 by default, and 1 / lambda_vacuum below would then be
     # taken in single precision no matter how exact everything else is
     lambda_vacuum = converter2torch(lambda_vacuum, device).real
@@ -141,9 +142,13 @@ def inc_vec_tmm_disp_lstack(
 
     n_L_ = len(imask) -1
     # matrix of Reflectivity and Transmissivity of the layer interfaces
-    requires_grad = True if (D.requires_grad or N.requires_grad) else False
-    L_ = torch.empty((n_stack, n_L_, n_theta, n_lambda, 2, 2), dtype=torch.float64).requires_grad_(
-        requires_grad
+    # no requires_grad_ here: that would make L_ a leaf, and filling a leaf by assignment is
+    # what autograd forbids. Assigning tracked values into an ordinary tensor is enough for
+    # gradients to flow back to N and D.
+    L_ = torch.empty(
+        (n_stack, n_L_, n_theta, n_lambda, 2, 2),
+        dtype=torch.float64,
+        device=N.device,
     )
 
     snell_theta = SnellLaw_vectorized(
@@ -159,7 +164,7 @@ def inc_vec_tmm_disp_lstack(
         d = D[:, m_]
         d[:, 0] = d[:, -1] = np.inf
         forward = coh_tmm(
-            pol, N_, d, snell_theta[0, :, m_[0], 0], lambda_vacuum, device
+            pol, N_, d, snell_theta[:, :, m_[0], :], lambda_vacuum, device
         )
         # the substack must be evaluated in both directions since we can have an incoming wave from the output side
         # (a reflection from an incoherent layer) and Reflectivit/Transmissivity can be different depending on the direction
@@ -167,7 +172,7 @@ def inc_vec_tmm_disp_lstack(
             pol,
             N_.flip([1]),
             d.flip([1]),
-            snell_theta[0, :, m_[-1], 0],
+            snell_theta[:, :, m_[-1], :],
             lambda_vacuum,
             device,
         )
@@ -254,11 +259,13 @@ def inc_vec_tmm_disp_lstack(
             -4.
             * np.pi
             * (torch.einsum("ijk,k,i->ijk", n_costheta, 1 / lambda_vacuum, D[:, k].real))
-        )
-        P_ = torch.zeros((*P.shape, 2, 2), dtype=P.dtype) # [n_stack, n_th, n_wl, 2, 2]
+        ).clamp_min(1e-30)
+        P_ = torch.zeros((*P.shape, 2, 2), dtype=P.dtype, device=P.device) # [n_stack, n_th, n_wl, 2, 2]
         P_[..., 0, 0] = 1/P
         P_[..., 1, 1] = P 
-        L_[:, i] = torch.einsum("ijklm,ijkmn->ijkln", P_, L_[:, i])
+        # the clone matters: without it this reads and writes the same storage, and backward
+        # then finds the tensor it saved has been mutated
+        L_[:, i] = torch.einsum("ijklm,ijkmn->ijkln", P_, L_[:, i].clone())
 
     # multiply all interfaces together
     L_tilde = L_[:, 0]

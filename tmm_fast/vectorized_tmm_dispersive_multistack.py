@@ -40,8 +40,10 @@ def coh_vec_tmm_disp_mstack(pol:str,
         Holds the layer thicknesses of the individual layers for a bunch of thin films in nanometer.
         T is of shape [S x L] with real-valued entries; infinite values are allowed for the first and last layers only!
     Theta : Tensor or array
-        Theta is a tensor or array that determines the angles with which the light propagates in the injection layer.
-        Theta is of shape [A] and holds the incidence angles [rad] in its entries.
+        Theta determines the angles with which the light propagates in the injection layer.
+        It normally has shape [A]. A precomputed angle grid of shape [S x A x W] is also
+        accepted, which is useful when this solver evaluates a substack entered from a
+        dispersive medium.
     lambda_vacuum : Tensor or numpy array
         Vacuum wavelengths for which reflection and transmission are computed given a bunch of thin films.
         It is of shape [W] and holds the wavelengths in nanometer.
@@ -121,14 +123,17 @@ def coh_vec_tmm_disp_mstack(pol:str,
         push_time = time.time() - starttime
     num_layers = T.shape[1]
     num_stacks = T.shape[0]
-    num_angles = Theta.shape[0]
+    num_angles = Theta.shape[0] if Theta.ndim == 1 else Theta.shape[1]
     num_wavelengths = lambda_vacuum.shape[0]
     # a dispersionless N holds no wavelength axis yet, repeat it across the spectrum. This has
     # to happen before check_inputs, which expects the full [S x L x W].
     if N.ndim == 2:
         N = N.unsqueeze(-1).repeat(1, 1, num_wavelengths)
     check_inputs(N, T, lambda_vacuum, Theta)
-    N.imag = torch.clamp(N.imag, max=35.)
+    # out of place on purpose: converter2torch hands back the caller's own tensor whenever it
+    # already is complex128 on the right device, so an in-place clamp would edit their array
+    # and, for a leaf that requires grad, raise instead of differentiating
+    N = torch.complex(N.real, N.imag.clamp(max=35.))
 
     # SnellThetas is a tensor, for each stack and layer, the angle that the light travels
     # through the layer. Computed with Snell's law. Note that the "angles" may be complex!
@@ -142,17 +147,16 @@ def coh_vec_tmm_disp_mstack(pol:str,
     # wave. Positive imaginary part means decaying.
 
     # delta is the total phase accrued by traveling through a given layer.
-    # Ignore warning about inf multiplication
-
-
-    delta = torch.einsum('skij,sj->skij', kz_list, T)
+    # Only the inner layers accumulate phase. Forming it for the semi-infinite edges as well
+    # would multiply a finite wavevector by an infinite thickness, and while the forward pass
+    # drops those entries, the backward pass of the einsum computes 0 * inf = nan for the
+    # refractive indices of the edge layers.
+    delta = torch.einsum('skij,sj->skij', kz_list[:, :, :, 1:-1], T[:, 1:-1])
 
     # check for opacity. If too much of the optical power is absorbed in a layer
     # it can lead to numerical instability.
-    # only the inner layers feed the propagation term below, the infinite edge thicknesses
-    # make delta infinite regardless and must not count as opacity
-    if torch.any(delta[:, :, :, 1:-1].imag > 35.):
-        delta.imag = torch.clamp(delta.imag, max=35.)
+    if torch.any(delta.imag > 35.):
+        delta = torch.complex(delta.real, delta.imag.clamp(max=35.))
         warn('Opacity warning. The imaginary part of the refractive index is clamped to 35i for numerical stability.\n'+
              'You might encounter problems with gradient computation...')
 
@@ -165,7 +169,7 @@ def coh_vec_tmm_disp_mstack(pol:str,
     
     # A ist the propagation term for matrix optic and holds the appropriate accumulated phase for the thickness
     # of each layer
-    A = torch.exp(1j * delta[:, :, :, 1:-1])
+    A = torch.exp(1j * delta)
     F = r_list[:, :, :, 1:]
     
     # M_list holds the transmission and reflection matrices from matrix-optics 
@@ -235,7 +239,18 @@ def SnellLaw_vectorized(n, th):
     th = th if th.dtype == torch.complex128 else th.type(torch.complex128)
     n = n if n.dtype == torch.complex128 else n.type(torch.complex128)
 
-    n0_ = torch.einsum('hk,j,hik->hjik', n[:,0], torch.sin(th), 1/n)
+    if th.ndim == 1:
+        n0_ = torch.einsum('hk,j,hik->hjik', n[:,0], torch.sin(th), 1/n)
+    elif th.ndim == 3:
+        # A substack embedded in a dispersive multilayer has a different incident angle for
+        # every stack and wavelength. Preserve that [S x A x W] grid instead of silently
+        # reusing stack 0 / wavelength 0.
+        n0_ = n[:, 0, None, None, :] * torch.sin(th[:, :, None, :]) / n[:, None, :, :]
+    else:
+        raise AssertionError(
+            'Theta is not of shape [A] (1d) or [S x A x W] (3d), as it is of shape '
+            + str(tuple(th.shape))
+        )
     angles = torch.asin(n0_)
     
     # The first and last entry need to be the forward angle (the intermediate
@@ -455,16 +470,34 @@ def check_inputs(N, T, lambda_vacuum, theta):
     \nfound N.shape=' + str(N.shape) + ' and T.shape=' + str(T.shape) + ' instead!'
     assert T.shape[1] == N.shape[1], 'The number of thin-film layers (second dimension) of N and T must coincide, \
     \nfound N.shape=' + str(N.shape) + ' and T.shape=' + str(T.shape) + ' instead!'
-    # check the dimensionality of Theta:
-    assert theta.ndim == 1, 'Theta is not of shape [A] (1d), as it is of dimension ' + str(theta.ndim)
+    # check the dimensionality of Theta. The full grid is used internally for coherent
+    # substacks whose injection medium is dispersive.
+    assert theta.ndim in (1, 3), (
+        'Theta is not of shape [A] (1d) or [S x A x W] (3d), as it is of shape '
+        + str(tuple(theta.shape))
+    )
+    if theta.ndim == 3:
+        assert theta.shape[0] == N.shape[0], (
+            'The first dimension of a Theta grid must match the number of stacks, found '
+            + str(tuple(theta.shape)) + ' and N.shape=' + str(tuple(N.shape))
+        )
+        assert theta.shape[2] == N.shape[2], (
+            'The last dimension of a Theta grid must match the wavelengths, found '
+            + str(tuple(theta.shape)) + ' and N.shape=' + str(tuple(N.shape))
+        )
     # check the dimensionality of lambda_vacuum:
     assert lambda_vacuum.ndim == 1, 'lambda_vacuum is not of shape [W] (1d), as it is of dimension ' + str(lambda_vacuum.ndim)
     assert N.shape[-1] == lambda_vacuum.shape[0], 'The last dimension of N must coincide with the dimension of lambda_vacuum (W),\nfound N.shape[-1]=' + str(N.shape[-1]) + ' and lambda_vacuum.shape[0]=' + str(lambda_vacuum.shape[0]) + ' instead!'
     # check well defined property of refractive indicies for the first and last layer:
-    answer  = torch.all(abs((torch.einsum('ij,k->ijk', N[:, 0], torch.sin(theta)).imag)) < np.finfo(float).eps)
-    assert answer, 'Non well-defined refractive indicies detected for first layer, check index ' + torch.argwhere(
-        abs((torch.einsum('ij,k->ijk', N[:, 0], torch.sin(theta)).imag)) > np.finfo(float).eps
-    ) 
+    # n * sin(theta) is the same in every layer by Snell's law, so this cancels to rounding
+    # rather than exactly; comparing against a single epsilon makes the check fire on noise
+    if theta.ndim == 1:
+        injection = torch.einsum('ij,k->ijk', N[:, 0], torch.sin(theta)).imag.abs()
+    else:
+        injection = (N[:, 0, None, :] * torch.sin(theta)).imag.abs()
+    assert torch.all(injection < 100 * EPSILON), (
+        'Non well-defined refractive indicies detected for the first layer at index '
+        + str(torch.argwhere(injection >= 100 * EPSILON).tolist()))
     
     
     

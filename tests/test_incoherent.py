@@ -36,15 +36,17 @@ def thicknesses(values, num_stacks):
 
 
 def reference(pol, N, T, imask, theta, wl):
-    """R and T from the scalar tmm package; the stacks of a batch are identical here."""
-    R = torch.zeros((theta.shape[0], wl.shape[0]), dtype=torch.double)
-    transmission = torch.zeros((theta.shape[0], wl.shape[0]), dtype=torch.double)
-    thickness = T[0].tolist()
-    for i, t in enumerate(theta.tolist()):
-        for j, w in enumerate(wl.tolist()):
-            result = inc_tmm(pol, N[0][:, j].tolist(), thickness, imask, t, w)
-            R[i, j] = result['R']
-            transmission[i, j] = result['T']
+    """R and T from the scalar tmm package over the complete stack/angle/wavelength grid."""
+    shape = (N.shape[0], theta.shape[0], wl.shape[0])
+    R = torch.zeros(shape, dtype=torch.double)
+    transmission = torch.zeros(shape, dtype=torch.double)
+    for stack in range(N.shape[0]):
+        thickness = T[stack].tolist()
+        for i, t in enumerate(theta.tolist()):
+            for j, w in enumerate(wl.tolist()):
+                result = inc_tmm(pol, N[stack, :, j].tolist(), thickness, imask, t, w)
+                R[stack, i, j] = result['R']
+                transmission[stack, i, j] = result['T']
     return R, transmission
 
 
@@ -68,13 +70,11 @@ def check_against_reference(pol, N, T, mask, imask, theta, wl, numpy_input=False
             fast = inc_tmm_fast(pol, N, T, mask, theta, wl, device=device)
         R = torch.as_tensor(fast['R']).cpu()
         transmission = torch.as_tensor(fast['T']).cpu()
-        assert R.shape == (N.shape[0],) + R_reference.shape, (device, R.shape)
-
-        for stack in range(N.shape[0]):
-            assert (R[stack].isnan() == R_reference.isnan()).all(), (device, stack)
-            assert (transmission[stack].isnan() == T_reference.isnan()).all(), (device, stack)
-            torch.testing.assert_close(R_reference, R[stack], rtol=rtol, atol=atol, equal_nan=True)
-            torch.testing.assert_close(T_reference, transmission[stack], rtol=rtol, atol=atol, equal_nan=True)
+        assert R.shape == R_reference.shape, (device, R.shape)
+        assert (R.isnan() == R_reference.isnan()).all(), device
+        assert (transmission.isnan() == T_reference.isnan()).all(), device
+        torch.testing.assert_close(R_reference, R, rtol=rtol, atol=atol, equal_nan=True)
+        torch.testing.assert_close(T_reference, transmission, rtol=rtol, atol=atol, equal_nan=True)
 
 
 @pytest.mark.parametrize('pol', POLARIZATIONS)
@@ -132,6 +132,39 @@ def test_absorbing_coherent_incoherent(pol):
     M = alternating_stack(num_layers=5, num_stacks=2, wl=wl, k_odd=.0005, k_even=.002)
     T = thicknesses([np.inf, 10000e-9, 100e-9, 300e-9, np.inf], num_stacks=2)
     check_against_reference(pol, M, T, [[2, 3]], ['i', 'i', 'c', 'c', 'i'], theta, wl)
+
+
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+@pytest.mark.parametrize('absorption', [0.0, 0.02])
+def test_dispersive_injection_medium_for_coherent_substack(pol, absorption):
+    """Each substack must use its own incident angle at every stack and wavelength."""
+    wl, theta = grid(n_wl=7, n_theta=5, max_angle=75)
+    M = torch.ones((2, 5, wl.shape[0]), dtype=torch.complex128)
+    dispersion = torch.linspace(0.0, 0.5, wl.shape[0], dtype=torch.float64)
+    M[0, 1] = 1.25 + dispersion + absorption * 1j
+    M[1, 1] = 1.90 - 0.6 * dispersion + absorption * 1j
+    M[:, 2] = 2.35 - 0.2 * dispersion
+    M[:, 3] = 1.40 + 0.15 * dispersion
+    T = thicknesses([np.inf, 4000e-9, 120e-9, 210e-9, np.inf], num_stacks=2)
+
+    check_against_reference(
+        pol, M, T, [[2, 3]], ['i', 'i', 'c', 'c', 'i'], theta, wl
+    )
+
+
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+@pytest.mark.parametrize('extinction', [10.0, 100.0])
+def test_strongly_absorbing_incoherent_layer_stays_finite(pol, extinction):
+    wl, theta = grid(n_wl=5, n_theta=4, max_angle=70)
+    M = torch.ones((2, 3, wl.shape[0]), dtype=torch.complex128)
+    M[0, 1] = 1.5 + extinction * 1j
+    M[1, 1] = 2.0 + 2 * extinction * 1j
+    T = thicknesses([np.inf, 10000e-9, np.inf], num_stacks=2)
+
+    check_against_reference(pol, M, T, [], ['i'] * 3, theta, wl)
+    result = inc_tmm_fast(pol, M, T, [], theta, wl)
+    assert torch.isfinite(result['R']).all()
+    assert torch.isfinite(result['T']).all()
 
 
 if __name__ == '__main__':
