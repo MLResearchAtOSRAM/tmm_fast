@@ -1,88 +1,114 @@
-import numpy as np
-import matplotlib.colors as colors
 import matplotlib.cm as cm
-
-def plot_stacks(ax, indexes, thickness, labels=None, show_material=True):
-    '''
-    Plots material layers on top of each other with the refractive index of the layer in colorcode.
-    
-    Parameter: 
-        ax: matplotlib axes object 
-            axes where the plot will put into
-            
-        indexes: array_like
-            array of real or complex refractive indexes 
-            
-        thickness: array_like or list of array_like
-            if provided an array of thicknesses, plots one stack 
-            if provided a list of arrays of thicknesses, plots them next to each other 
-            the values should be given in meters (ie. 4e-6 for a 4 micron thick layer)
-            
-    Key word arguments: (optional)
-        labels: str or list of str
-            Labels for the stack, if provided a list of str, the length must exactly match the
-            length of the list of thicknesses
-            
-        show_material: boolean
-            If True, displays the real refractive index of the first wavelength which is computed 
-            directly in the depiction of the layer. If the layer is too thin to properly display 
-            the refractive index, it is suppresed.
-            
-    Returns:
-        ax: matplotlib axes object 
-            axes with the plotted stacks for further modification
-            
-        cmap: matplotlib colormap object 
-            colormap to show 
+import matplotlib.colors as colors
+import numpy as np
 
 
-    Example:
-    fig, ax = plt.subplots(1,1)
-    indexes = np.array([2, 1, 2.5, 1.6])
-    thickness = np.array([5, 7, 3, 6]*1e-6)
-    labels = 'this is my stack'
-    ax, cmap = plot_stacks(ax, indexes, thickness, labels=labels ) 
-    plt.show()
-    '''
-    mat={'1.4585':'Si02',
-        '2.3403':'Nb205',
-        '2.3991':'GaN'}
-    
-    if type(indexes) is not list:
-        minmax = colors.Normalize(vmin=min(indexes)-1, vmax=max(indexes)+1)
-        indexes = indexes.real[::-1] 
+def plot_stacks(ax, indexes, thickness, labels=None, show_material=True, names=None):
+    """Plot one or more multilayer stacks, coloured by refractive index.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Axes that receives the plot.
+    indexes : array-like or list of array-like
+        Real or complex refractive indices for one stack, or one array per stack.
+    thickness : array-like or list of array-like
+        Layer thicknesses in metres for one stack, or one array per stack.
+    labels : str or sequence of str, optional
+        Labels shown below multiple stacks.
+    show_material : bool, default=True
+        Display the material name, or the real refractive index when no name is supplied.
+    names : sequence of str or sequence of sequences, optional
+        Material names in layer order. Supply one sequence per stack when plotting multiple stacks.
+
+    Returns
+    -------
+    ax : matplotlib.axes.Axes
+        The modified axes.
+    cmap : matplotlib.cm.ScalarMappable
+        The refractive-index colour map.
+    """
+    multiple = isinstance(thickness, list)
+    index_stacks = _as_stacks(indexes, multiple, 'indexes')
+    thickness_stacks = _as_stacks(thickness, multiple, 'thickness')
+
+    if len(index_stacks) != len(thickness_stacks):
+        raise ValueError('indexes and thickness must contain the same number of stacks')
+    for index, thick in zip(index_stacks, thickness_stacks):
+        if index.size != thick.size:
+            raise ValueError('each stack must have one refractive index per layer thickness')
+
+    name_stacks = _names_for_stacks(names, multiple, len(index_stacks))
+    for material_names, index in zip(name_stacks, index_stacks):
+        if material_names is not None and len(material_names) != index.size:
+            raise ValueError('names must contain one material name per layer')
+
+    real_indexes = [np.asarray(index).real for index in index_stacks]
+    all_indexes = np.concatenate(real_indexes)
+    norm = colors.Normalize(vmin=np.min(all_indexes) - 1, vmax=np.max(all_indexes) + 1)
+    cmap = cm.ScalarMappable(norm=norm, cmap=cm.rainbow)
+
+    if multiple:
+        stack_labels = _stack_labels(labels, len(thickness_stacks))
+        max_height = max(np.sum(thick) for thick in thickness_stacks) * 1e6
+        for stack, (index, thick, material_names) in enumerate(
+            zip(real_indexes, thickness_stacks, name_stacks)
+        ):
+            _plot_stack(ax, stack * 0.4, 0.36, index, thick, material_names,
+                        show_material, max_height, cmap)
+        positions = np.arange(len(thickness_stacks)) * 0.4
+        ax.set_xticks(positions)
+        ax.set_xticklabels(stack_labels)
     else:
-        for i in range(len(indexes)):
-            indexes[i] = indexes[i].real[::-1]
-#     indexes = indexes.real[::-1]
-        minmax = colors.Normalize(vmin=min(indexes[0])-1, vmax=max(indexes[0])+1)
-    cmap = cm.ScalarMappable(norm= minmax, cmap=cm.rainbow)
-    if labels is None: # if no labels are provided, numerate the stacks
-        labels = str(np.arange(len(thickness)))
-    if type(thickness) is list:
-        max_stack_height = np.max([np.sum(k)*1e6 for k in thickness])
-        for j, thick in enumerate(thickness):
-            position = j*0.4
-            for i, layer in enumerate(np.cumsum(thick*1e6)[::-1]):
-                ax.bar(position, layer, 0.36, color = cmap.to_rgba(indexes[j][i]) )
-                if show_material and ((thick*1e6)[::-1][i] > max_stack_height/22):
-                    text = mat[str(indexes[j][i])] if str(indexes[j][i]) in mat else 'n='+str(indexes[j][i])
-                    ax.text(position-0.175, layer-0.008*max_stack_height, text, va='top', c='gray')
-        ax.set_xticks(np.arange(0, 0.4*len(thickness), 0.401))  # funny trick to make sure the labels
-                                                                # are centered beneath the stack
-        if labels is not None:
-            ax.set_xticklabels(labels)
-        else:
-            ax.set_xticklabels([i+1 for i in range(len(thickness))])
-    else:      
-        total_stack_height = np.sum(thickness)*1e6
-        for i, layer in enumerate(np.cumsum(thickness*1e6)[::-1]):
-            ax.bar(0, layer, 0.2, color = cmap.to_rgba(indexes[i]) )
-            if show_material and ((thickness*1e6)[::-1][i] > total_stack_height/22):
-                text = mat[str(indexes[i])] if str(indexes[i]) in mat else 'n='+str(indexes[i])
-                ax.text(-0.098, layer-0.008*total_stack_height, text, va='top', c='gray')
-        ax.set_ylim(0, (np.sum(thickness)*1.05*1e6))
+        total_height = np.sum(thickness_stacks[0]) * 1e6
+        _plot_stack(ax, 0, 0.2, real_indexes[0], thickness_stacks[0], name_stacks[0],
+                    show_material, total_height, cmap)
+        ax.set_ylim(0, total_height * 1.05)
         ax.xaxis.set_visible(False)
+
     ax.set_ylabel(r'Thickness in $\mu$m')
-        
     return ax, cmap
+
+
+def _as_stacks(values, multiple, name):
+    stacks = values if multiple else [values]
+    result = [np.asarray(stack).copy() for stack in stacks]
+    if any(stack.ndim != 1 for stack in result):
+        raise ValueError(name + ' must contain one-dimensional layer arrays')
+    return result
+
+
+def _names_for_stacks(names, multiple, count):
+    if names is None:
+        return [None] * count
+    stacks = list(names) if multiple else [list(names)]
+    if len(stacks) != count:
+        raise ValueError('names must contain one sequence per stack')
+    return [list(stack) for stack in stacks]
+
+
+def _stack_labels(labels, count):
+    if labels is None:
+        return [str(index + 1) for index in range(count)]
+    if isinstance(labels, str):
+        labels = [labels]
+    if len(labels) != count:
+        raise ValueError('labels must contain one label per stack')
+    return labels
+
+
+def _plot_stack(ax, position, width, indexes, thickness, names, show_material,
+                stack_height, cmap):
+    cumulative = np.cumsum(np.asarray(thickness) * 1e6)[::-1]
+    layer_thicknesses = (np.asarray(thickness) * 1e6)[::-1]
+    plot_indexes = indexes[::-1]
+    plot_names = None if names is None else names[::-1]
+
+    for layer, (height, layer_thickness, index) in enumerate(
+        zip(cumulative, layer_thicknesses, plot_indexes)
+    ):
+        ax.bar(position, height, width, color=cmap.to_rgba(index))
+        if show_material and layer_thickness > stack_height / 22:
+            text = 'n=' + str(index) if plot_names is None else str(plot_names[layer])
+            ax.text(position - width * 0.49, height - 0.008 * stack_height,
+                    text, va='top', c='gray')
