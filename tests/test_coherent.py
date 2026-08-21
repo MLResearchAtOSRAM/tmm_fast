@@ -1,199 +1,174 @@
 import numpy as np
+import pytest
 import torch
+
+from tmm import coh_tmm
+
 from tmm_fast import coh_tmm as coh_tmm_fast
-import matplotlib.pyplot as plt
 
-from tmm import coh_tmm 
+POLARIZATIONS = ['s', 'p']
 
 
-def test_input_output_medium():
+def reference(pol, N, T, theta, wl):
+    """R and T from the scalar tmm package, for every stack, angle and wavelength."""
+    R = torch.zeros((N.shape[0], theta.shape[0], wl.shape[0]), dtype=torch.double)
+    transmission = torch.zeros_like(R)
+    for stack in range(N.shape[0]):
+        for i, t in enumerate(theta.tolist()):
+            for j, w in enumerate(wl.tolist()):
+                result = coh_tmm(pol, N[stack][:, j].tolist(), T[stack].tolist(), t, w)
+                R[stack, i, j] = result['R']
+                transmission[stack, i, j] = result['T']
+    return R, transmission
+
+
+def check_against_reference(pol, N, T, theta, wl, rtol=1e-10, atol=1e-12):
+    """
+    Compares coh_tmm against the scalar reference, on the GPU too where there is one.
+
+    The tolerances are tight on purpose. Agreement across every configuration in this module is
+    6.8e-14 absolute and 5.9e-13 relative, so anything looser stops being a regression test: the
+    single precision M_r0 that used to cost seven digits still passed at 1e-6.
+    """
+    R_reference, T_reference = reference(pol, N, T, theta, wl)
+    devices = ['cpu'] + (['cuda'] if torch.cuda.is_available() else [])
+    for device in devices:
+        fast = coh_tmm_fast(pol, N, T, theta, wl, device=device)
+        assert fast['R'].shape == R_reference.shape, (device, fast['R'].shape)
+        torch.testing.assert_close(R_reference, fast['R'].cpu(), rtol=rtol, atol=atol)
+        torch.testing.assert_close(T_reference, fast['T'].cpu(), rtol=rtol, atol=atol)
+
+
+def random_stacks(num_layers, num_stacks, absorbing=False):
+    """A batch of stacks with random indices and thicknesses, seeded to stay reproducible."""
     np.random.seed(111)
     torch.manual_seed(111)
-    n_wl = 65
-    n_th = 45
-    wl = torch.linspace(400, 1200, n_wl) * (10**(-9))
-    theta = torch.linspace(0, 89, n_th) * (np.pi/180)
-    num_layers = 2
-    num_stacks = 2
+    wl = torch.linspace(400, 1200, 65) * (10**(-9))
+    theta = torch.linspace(0, 89, 45) * (np.pi/180)
 
-    #create m
     M = torch.ones((num_stacks, num_layers, wl.shape[0])).type(torch.complex128)
-    M[:, 0] = 2.5
+    for i in range(1, num_layers - 1):
+        M[:, i, :] *= np.random.uniform(0, 3, [1])[0]
+        if absorbing:
+            M[:, i, :] += np.random.uniform(0, 1, [1])[0] * 1j
+
+    max_t = 150 * (10**(-9))
+    min_t = 10 * (10**(-9))
+    T = (max_t - min_t) * np.random.uniform(0, 1, (num_stacks, num_layers)) + min_t
+    T[:, 0] = np.inf
+    T[:, -1] = np.inf
+    return M, torch.from_numpy(T), theta, wl
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+def test_input_output_medium(pol):
+    np.random.seed(111)
+    torch.manual_seed(111)
+    wl = torch.linspace(400, 1200, 65) * (10**(-9))
+    theta = torch.linspace(0, 89, 45) * (np.pi/180)
+
+    # two semi-infinite media and nothing in between
+    M = torch.ones((2, 2, wl.shape[0])).type(torch.complex128)
     M[:, 0] = 1.3
+    T = np.full((2, 2), np.inf)
 
-    #create t
-    max_t = 150 * (10**(-9))
-    min_t = 10 * (10**(-9))
-    T = (max_t - min_t) * np.random.uniform(0, 1, (M.shape[0], M.shape[1])) + min_t
-
-    T[:, 0] = np.inf
-    T[:, 1] = np.inf
-
-    T = torch.from_numpy(T)
-    O_fast_s = coh_tmm_fast('s', M, T, theta, wl, device='cpu')
-    O_fast_p = coh_tmm_fast('p', M, T, theta, wl, device='cpu')
-
-    R_tmm_s = torch.zeros((num_stacks, n_th, n_wl), dtype=torch.double)
-    R_tmm_p = torch.zeros((num_stacks, n_th, n_wl), dtype=torch.double)
-    T_tmm_s = torch.zeros((num_stacks, n_th, n_wl), dtype=torch.double)
-    T_tmm_p = torch.zeros((num_stacks, n_th, n_wl), dtype=torch.double)
-
-    for h in range(num_stacks):
-        for i, t in enumerate(theta.tolist()):
-            for j, w in enumerate(wl.tolist()):
-                res_s = coh_tmm('s', M[0][:, j].tolist(), T[h].tolist(), t, w)
-                res_p = coh_tmm('p', M[0][:, j].tolist(), T[h].tolist(), t, w)
-                R_tmm_s[h, i, j] = res_s['R']
-                R_tmm_p[h, i, j] = res_p['R']
-                T_tmm_s[h, i, j] = res_s['T']
-                T_tmm_p[h, i, j] = res_p['T']
-
-    if torch.cuda.is_available():
-        O_fast_s_gpu = coh_tmm_fast('s', M, T, theta, wl, device='cuda')
-        O_fast_p_gpu = coh_tmm_fast('p', M, T, theta, wl, device='cuda')
-
-        assert O_fast_s_gpu, 'gpu computation not available'
-        torch.testing.assert_close(R_tmm_s, O_fast_s_gpu['R'], rtol=1e-6, atol=1e-6)
-        torch.testing.assert_close(R_tmm_p, O_fast_p_gpu['R'], rtol=1e-6, atol=1e-6)
-        torch.testing.assert_close(T_tmm_s, O_fast_s_gpu['T'], rtol=1e-6, atol=1e-6)
-        torch.testing.assert_close(T_tmm_p, O_fast_p_gpu['T'], rtol=1e-6, atol=1e-6)
-
-    torch.testing.assert_close(R_tmm_s, O_fast_s['R'], rtol=1e-6, atol=1e-6)
-    torch.testing.assert_close(R_tmm_p, O_fast_p['R'], rtol=1e-6, atol=1e-6)
-    torch.testing.assert_close(T_tmm_s, O_fast_s['T'], rtol=1e-6, atol=1e-6)
-    torch.testing.assert_close(T_tmm_p, O_fast_p['T'], rtol=1e-6, atol=1e-6)
-
-    # check dtypes, it appears that pytorch uses float16
-    # at some point in the computation
-    # torch.testing.assert_close(O_fast_s['T'][0], T_tmm_s)
+    check_against_reference(pol, M, torch.from_numpy(T), theta, wl)
 
 
-def test_basic_coherent_stack():
-    np.random.seed(111)
-    torch.manual_seed(111)
-    n_wl = 65
-    n_th = 45
-    wl = torch.linspace(400, 1200, n_wl) * (10**(-9))
-    theta = torch.linspace(0, 89, n_th) * (np.pi/180)
-    num_layers = 8
-    num_stacks = 3
-
-    #create m
-    M = torch.ones((num_stacks, num_layers, wl.shape[0])).type(torch.complex128)
-    for i in range(1, M.shape[1]-1):
-        if np.mod(i, 2) == 1:
-            M[:, i, :] *= np.random.uniform(0, 3, [1])[0]
-        else:
-            M[:, i, :] *= np.random.uniform(0, 3, [1])[0]
-
-    #create t
-    max_t = 150 * (10**(-9))
-    min_t = 10 * (10**(-9))
-    T = (max_t - min_t) * np.random.uniform(0, 1, (M.shape[0], M.shape[1])) + min_t
-
-    T[:, 0] = np.inf
-    T[:, -1] = np.inf
-
-    T = torch.from_numpy(T)
-    O_fast_s = coh_tmm_fast('s', M, T, theta, wl, device='cpu')
-    O_fast_p = coh_tmm_fast('p', M, T, theta, wl, device='cpu')
-
-    R_tmm_s = torch.zeros((num_stacks, n_th, n_wl), dtype=torch.double)
-    R_tmm_p = torch.zeros((num_stacks, n_th, n_wl), dtype=torch.double)
-    T_tmm_s = torch.zeros((num_stacks, n_th, n_wl), dtype=torch.double)
-    T_tmm_p = torch.zeros((num_stacks, n_th, n_wl), dtype=torch.double)
-
-    for h in range(num_stacks):
-        for i, t in enumerate(theta.tolist()):
-            for j, w in enumerate(wl.tolist()):
-                res_s = coh_tmm('s', M[0][:, j].tolist(), T[h].tolist(), t, w)
-                res_p = coh_tmm('p', M[0][:, j].tolist(), T[h].tolist(), t, w)
-                R_tmm_s[h, i, j] = res_s['R']
-                R_tmm_p[h, i, j] = res_p['R']
-                T_tmm_s[h, i, j] = res_s['T']
-                T_tmm_p[h, i, j] = res_p['T']
-
-    if torch.cuda.is_available():
-        O_fast_s_gpu = coh_tmm_fast('s', M, T, theta, wl, device='cuda')
-        O_fast_p_gpu = coh_tmm_fast('p', M, T, theta, wl, device='cuda')
-
-        assert O_fast_s_gpu, 'gpu computation not available'
-        torch.testing.assert_close(R_tmm_s, O_fast_s_gpu['R'], rtol=1e-6, atol=1e-6)
-        torch.testing.assert_close(R_tmm_p, O_fast_p_gpu['R'], rtol=1e-6, atol=1e-6)
-        torch.testing.assert_close(T_tmm_s, O_fast_s_gpu['T'], rtol=1e-6, atol=1e-6)
-        torch.testing.assert_close(T_tmm_p, O_fast_p_gpu['T'], rtol=1e-6, atol=1e-6)
-
-    torch.testing.assert_close(R_tmm_s, O_fast_s['R'], rtol=1e-6, atol=1e-6)
-    torch.testing.assert_close(R_tmm_p, O_fast_p['R'], rtol=1e-6, atol=1e-6)
-    torch.testing.assert_close(T_tmm_s, O_fast_s['T'], rtol=1e-6, atol=1e-6)
-    torch.testing.assert_close(T_tmm_p, O_fast_p['T'], rtol=1e-6, atol=1e-6)
+@pytest.mark.slow
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+def test_basic_coherent_stack(pol):
+    M, T, theta, wl = random_stacks(num_layers=8, num_stacks=3)
+    check_against_reference(pol, M, T, theta, wl)
 
 
+@pytest.mark.slow
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+def test_absorbing_coherent_stack(pol):
+    M, T, theta, wl = random_stacks(num_layers=8, num_stacks=3, absorbing=True)
+    check_against_reference(pol, M, T, theta, wl)
 
-def test_absorbing_coherent_stack():
-    np.random.seed(111)
-    torch.manual_seed(111)
-    n_wl = 65
-    n_th = 45
-    wl = torch.linspace(400, 1200, n_wl) * (10**(-9))
-    theta = torch.linspace(0, 89, n_th) * (np.pi/180)
-    num_layers = 8
-    num_stacks = 3
 
-    #create m
-    M = torch.ones((num_stacks, num_layers, wl.shape[0])).type(torch.complex128)
-    for i in range(1, M.shape[1]-1):
-        if np.mod(i, 2) == 1:
-            M[:, i, :] *= np.random.uniform(0,3,[1])[0]
-            M[:, i, :] += np.random.uniform(0, 1, [1])[0]*1j
-        else:
-            M[:, i, :] *= np.random.uniform(0,3,[1])[0]
-            M[:, i, :] += np.random.uniform(0, 1, [1])[0]*1j
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+def test_total_internal_reflection(pol):
+    # a dense injection layer radiating into air, with layers in between: past the critical angle
+    # of 16.6 deg the exit wave is evanescent, and a lossless stack has to reflect everything
+    wl = torch.linspace(500, 900, 5) * (10**(-9))
+    theta = torch.deg2rad(torch.tensor([0., 5., 10., 15., 20., 30., 40., 45.], dtype=torch.double))
+    M = torch.tensor([3.5, 1.8, 2.4, 1.0], dtype=torch.complex128)[None, :, None].repeat(1, 1, wl.shape[0])
+    T = torch.tensor([[np.inf, 120e-9, 80e-9, np.inf]], dtype=torch.double)
 
-    #create t
-    max_t = 150 * (10**(-9))
-    min_t = 10 * (10**(-9))
-    T = (max_t - min_t) * np.random.uniform(0, 1, (M.shape[0], M.shape[1])) + min_t
+    check_against_reference(pol, M, T, theta, wl)
 
-    T[:, 0] = np.inf
-    T[:, -1] = np.inf
+    critical = np.arcsin(1.0 / 3.5)
+    beyond = theta > critical
+    fast = coh_tmm_fast(pol, M, T, theta, wl)
+    torch.testing.assert_close(fast['R'][0][beyond], torch.ones_like(fast['R'][0][beyond]),
+                               rtol=0, atol=1e-9)
+    assert fast['T'][0][beyond].abs().max() < 1e-12, fast['T'][0][beyond].abs().max()
 
-    T = torch.from_numpy(T)
-    O_fast_s = coh_tmm_fast('s', M, T, theta, wl, device='cpu')
-    O_fast_p = coh_tmm_fast('p', M, T, theta, wl, device='cpu')
 
-    R_tmm_s = torch.zeros((num_stacks, n_th, n_wl), dtype=torch.double)
-    R_tmm_p = torch.zeros((num_stacks, n_th, n_wl), dtype=torch.double)
-    T_tmm_s = torch.zeros((num_stacks, n_th, n_wl), dtype=torch.double)
-    T_tmm_p = torch.zeros((num_stacks, n_th, n_wl), dtype=torch.double)
+def dispersionless_reference(pol, n, d, theta, wl):
+    R = torch.zeros((theta.shape[0], wl.shape[0]), dtype=torch.double)
+    T = torch.zeros((theta.shape[0], wl.shape[0]), dtype=torch.double)
+    for i, t in enumerate(theta.tolist()):
+        for j, w in enumerate(wl.tolist()):
+            res = coh_tmm(pol, n, d, t, w)
+            R[i, j] = res['R']
+            T[i, j] = res['T']
+    return R, T
 
-    for h in range(num_stacks):
-        for i, t in enumerate(theta.tolist()):
-            for j, w in enumerate(wl.tolist()):
-                res_s = coh_tmm('s', M[0][:, j].tolist(), T[h].tolist(), t, w)
-                res_p = coh_tmm('p', M[0][:, j].tolist(), T[h].tolist(), t, w)
-                R_tmm_s[h, i, j] = res_s['R']
-                R_tmm_p[h, i, j] = res_p['R']
-                T_tmm_s[h, i, j] = res_s['T']
-                T_tmm_p[h, i, j] = res_p['T']
 
-    if torch.cuda.is_available():
-        O_fast_s_gpu = coh_tmm_fast('s', M, T, theta, wl, device='cuda')
-        O_fast_p_gpu = coh_tmm_fast('p', M, T, theta, wl, device='cuda')
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+def test_single_wavelength_single_stack(pol):
+    # a single stack of dispersionless materials has neither a stack nor a wavelength axis
+    # to pass, which is what tmm_fast is supposed to accept for constant refractive indices
+    wl = torch.tensor([600e-9], dtype=torch.double)
+    theta = torch.linspace(0, 80, 9) * (np.pi / 180)
+    M = torch.tensor([1.0, 1.46, 2.56, 1.52], dtype=torch.complex128)
+    T = torch.tensor([np.inf, 120e-9, 90e-9, np.inf], dtype=torch.double)
 
-        assert O_fast_s_gpu, 'gpu computation not available'
-        torch.testing.assert_close(R_tmm_s, O_fast_s_gpu['R'], rtol=1e-6, atol=1e-6)
-        torch.testing.assert_close(R_tmm_p, O_fast_p_gpu['R'], rtol=1e-6, atol=1e-6)
-        torch.testing.assert_close(T_tmm_s, O_fast_s_gpu['T'], rtol=1e-6, atol=1e-6)
-        torch.testing.assert_close(T_tmm_p, O_fast_p_gpu['T'], rtol=1e-6, atol=1e-6)
+    O_fast = coh_tmm_fast(pol, M, T, theta, wl)
+    assert O_fast['R'].shape == (theta.shape[0], wl.shape[0]), O_fast['R'].shape
+    R_tmm, T_tmm = dispersionless_reference(pol, M.tolist(), T.tolist(), theta, wl)
+    torch.testing.assert_close(R_tmm, O_fast['R'], rtol=1e-10, atol=1e-12)
+    torch.testing.assert_close(T_tmm, O_fast['T'], rtol=1e-10, atol=1e-12)
 
-    torch.testing.assert_close(R_tmm_s, O_fast_s['R'], rtol=1e-6, atol=1e-6)
-    torch.testing.assert_close(R_tmm_p, O_fast_p['R'], rtol=1e-6, atol=1e-6)
-    torch.testing.assert_close(T_tmm_s, O_fast_s['T'], rtol=1e-6, atol=1e-6)
-    torch.testing.assert_close(T_tmm_p, O_fast_p['T'], rtol=1e-6, atol=1e-6)
+
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+def test_dispersionless_single_stack(pol):
+    # same, but over a spectrum: the constant index still carries no wavelength axis
+    wl = torch.linspace(500, 700, 5) * (10**(-9))
+    theta = torch.linspace(0, 80, 9) * (np.pi / 180)
+    M = torch.tensor([1.0, 1.46, 2.56, 1.52], dtype=torch.complex128)
+    T = torch.tensor([np.inf, 120e-9, 90e-9, np.inf], dtype=torch.double)
+
+    O_fast = coh_tmm_fast(pol, M, T, theta, wl)
+    assert O_fast['R'].shape == (theta.shape[0], wl.shape[0]), O_fast['R'].shape
+    R_tmm, T_tmm = dispersionless_reference(pol, M.tolist(), T.tolist(), theta, wl)
+    torch.testing.assert_close(R_tmm, O_fast['R'], rtol=1e-10, atol=1e-12)
+    torch.testing.assert_close(T_tmm, O_fast['T'], rtol=1e-10, atol=1e-12)
+
+
+@pytest.mark.parametrize('pol', POLARIZATIONS)
+def test_dispersionless_multiple_stacks(pol):
+    # a batch of dispersionless stacks is [S x L]; the thicknesses being [S x L] is what
+    # tells it apart from the [L x W] of a single dispersive stack
+    wl = torch.linspace(500, 700, 5) * (10**(-9))
+    theta = torch.linspace(0, 80, 5) * (np.pi / 180)
+    M = torch.tensor([[1.0, 1.46, 2.56, 1.52],
+                      [1.0, 2.20, 1.38, 1.52]], dtype=torch.complex128)
+    T = torch.tensor([[np.inf, 120e-9, 90e-9, np.inf],
+                      [np.inf, 60e-9, 140e-9, np.inf]], dtype=torch.double)
+
+    O_fast = coh_tmm_fast(pol, M, T, theta, wl)
+    assert O_fast['R'].shape == (M.shape[0], theta.shape[0], wl.shape[0]), O_fast['R'].shape
+    for stack in range(M.shape[0]):
+        R_tmm, T_tmm = dispersionless_reference(pol, M[stack].tolist(), T[stack].tolist(), theta, wl)
+        torch.testing.assert_close(R_tmm, O_fast['R'][stack], rtol=1e-10, atol=1e-12)
+        torch.testing.assert_close(T_tmm, O_fast['T'][stack], rtol=1e-10, atol=1e-12)
 
 
 if __name__ == '__main__':
-    test_input_output_medium()
-    test_basic_coherent_stack()
-    test_absorbing_coherent_stack()
+    raise SystemExit(pytest.main([__file__, '-q']))

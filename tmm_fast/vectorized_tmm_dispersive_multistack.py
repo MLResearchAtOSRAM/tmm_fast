@@ -108,27 +108,27 @@ def coh_vec_tmm_disp_mstack(pol:str,
     T = converter2torch(T, device)
     lambda_vacuum = converter2torch(lambda_vacuum, device)
     Theta = converter2torch(Theta, device)
-    squeezed_N = False
-    squeezed_T = False
-    if N.ndim < 3:
-        squeezed_N = True
-        N = N.unsqueeze(0)
-    if T.ndim < 2:
-        squeezed_T = True
+    # T tells a single stack, of shape [L], apart from a batch of them, of shape [S x L].
+    # N follows suit and may additionally come without the wavelength axis if the materials
+    # are dispersionless, i.e. [L] or [S x L] instead of [L x W] or [S x L x W].
+    assert T.ndim in (1, 2), 'T is not of shape [L] (1d) or [S x L] (2d), as it is of dimension ' + str(T.ndim)
+    squeezed = T.ndim == 1
+    if squeezed:
         T = T.unsqueeze(0)
-    assert squeezed_N == squeezed_T, 'N and T are not of same shape, as they are of dimensions ' + str(N.ndim) + ' and ' + str(T.ndim)
+        N = N.unsqueeze(0)
+    assert N.ndim in (2, 3), 'N is not of shape [L], [L x W], [S x L] or [S x L x W], as it is of shape ' + str(tuple(N.shape))
     if timer:
         push_time = time.time() - starttime
     num_layers = T.shape[1]
     num_stacks = T.shape[0]
     num_angles = Theta.shape[0]
     num_wavelengths = lambda_vacuum.shape[0]
+    # a dispersionless N holds no wavelength axis yet, repeat it across the spectrum. This has
+    # to happen before check_inputs, which expects the full [S x L x W].
+    if N.ndim == 2:
+        N = N.unsqueeze(-1).repeat(1, 1, num_wavelengths)
     check_inputs(N, T, lambda_vacuum, Theta)
     N.imag = torch.clamp(N.imag, max=35.)
-
-    # if a constant refractive index is used (no dispersion) extend the tensor
-    if N.ndim == 2:
-       N = torch.tile(N, (num_wavelengths, 1)).T
 
     # SnellThetas is a tensor, for each stack and layer, the angle that the light travels
     # through the layer. Computed with Snell's law. Note that the "angles" may be complex!
@@ -149,7 +149,9 @@ def coh_vec_tmm_disp_mstack(pol:str,
 
     # check for opacity. If too much of the optical power is absorbed in a layer
     # it can lead to numerical instability.
-    if torch.any(delta.imag > 35.):
+    # only the inner layers feed the propagation term below, the infinite edge thicknesses
+    # make delta infinite regardless and must not count as opacity
+    if torch.any(delta[:, :, :, 1:-1].imag > 35.):
         delta.imag = torch.clamp(delta.imag, max=35.)
         warn('Opacity warning. The imaginary part of the refractive index is clamped to 35i for numerical stability.\n'+
              'You might encounter problems with gradient computation...')
@@ -200,7 +202,7 @@ def coh_vec_tmm_disp_mstack(pol:str,
     R = R_from_r_vec(r)
     T = T_from_t_vec(pol, t, N[:, 0], N[:, -1], SnellThetas[:, :, 0], SnellThetas[:, :, -1])
 
-    if squeezed_T and r.shape[0] == 1:
+    if squeezed and r.shape[0] == 1:
         r = torch.reshape(r, (r.shape[1], r.shape[2]))
         R = torch.reshape(R, (R.shape[1], R.shape[2]))
         T = torch.reshape(T, (T.shape[1], T.shape[2]))
@@ -339,54 +341,6 @@ def is_not_forward_angle(n, theta):
     
     # torch.testing.assert_close((~answer_tmm).type(torch.float), answer)
 
-    return answer
-
-def is_forward_angle(n, theta):
-    """
-    if a wave is traveling at angle theta from normal in a medium with index n,
-    calculate whether or not this is the forward-traveling wave (i.e., the one
-    going from front to back of the stack, like the incoming or outgoing waves,
-    but unlike the reflected wave). For real n & theta, the criterion is simply
-    -pi/2 < theta < pi/2, but for complex n & theta, it's more complicated.
-    See https://arxiv.org/abs/1603.02720 appendix D. If theta is the forward
-    angle, then (pi-theta) is the backward angle and vice-versa.
-    """
-    n = n.clone().detach().to(torch.cfloat)  # torch.tensor(n, dtype=torch.cfloat)
-    assert torch.all(n.real * n.imag >= 0), ("For materials with gain, it's ambiguous which "
-                                  "beam is incoming vs outgoing. See "
-                                  "https://arxiv.org/abs/1603.02720 Appendix C.\n"
-                                  "n: " + str(n) + "   angle: " + str(theta))
-    # assert n.dtype is not complex,  ("For materials with gain, it's ambiguous which "
-    #                               "beam is incoming vs outgoing. See "
-    #                               "https://arxiv.org/abs/1603.02720 Appendix C.\n"
-    #                               "n: " + str(n) + "   angle: " + str(theta))
-
-    ncostheta = n * torch.cos(theta)
-    ncostheta = ncostheta.clone().detach().to(torch.cfloat)  # torch.tensor(ncostheta, dtype=torch.cfloat)
-    if torch.all(abs(ncostheta.imag) > 100 * EPSILON):
-        # Either evanescent decay or lossy medium. Either way, the one that
-        # decays is the forward-moving wave
-        answer = (ncostheta.imag > 0)
-    else:
-        # Forward is the one with positive Poynting vector
-        # Poynting vector is Re[n cos(theta)] for s-polarization or
-        # Re[n cos(theta*)] for p-polarization, but it turns out they're consistent
-        # so I'll just assume s then check both below
-        answer = torch.any((ncostheta.real > 0))
-    # convert from numpy boolean to the normal Python boolean
-    answer = bool(answer)
-    # double-check the answer ... can't be too careful!
-    error_string = ("It's not clear which beam is incoming vs outgoing. Weird"
-                    " index maybe?\n"
-                    "n: " + str(n) + "   angle: " + str(theta))
-    if answer is True:
-        assert torch.all(ncostheta.imag > -100 * EPSILON), error_string
-        assert torch.all(ncostheta.real > -100 * EPSILON), error_string
-        assert torch.all((n * torch.cos(theta.conj())).real > -100 * EPSILON), error_string
-    else:
-        assert torch.all(ncostheta.imag < 100 * EPSILON), error_string
-        assert torch.all(ncostheta.real < 100 * EPSILON), error_string
-        assert torch.all((n * torch.cos(theta.conjugate())).real < 100 * EPSILON), error_string
     return answer
 
 def interface_r_vec(polarization, n_i, n_f, th_i, th_f):

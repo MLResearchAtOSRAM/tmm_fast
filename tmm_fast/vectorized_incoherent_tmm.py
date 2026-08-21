@@ -106,7 +106,7 @@ def inc_vec_tmm_disp_lstack(
     N[:, 3] = 1.3 + .003j
     N[:, 4] = 1.1 + .0j
 
-    D = layer_thicknesses = torch.empty((n_stacks, n_layers), dtype=torch.float128)
+    D = layer_thicknesses = torch.empty((n_stacks, n_layers), dtype=torch.float64)
     D[:, 0] = np.inf
     # test how a a change of the first layer thickness changes the result
     D[0, 1] = 200e-9
@@ -122,6 +122,9 @@ def inc_vec_tmm_disp_lstack(
     """
     N = converter2torch(N, device)
     D = converter2torch(D, device)
+    # torch.linspace hands out float32 by default, and 1 / lambda_vacuum below would then be
+    # taken in single precision no matter how exact everything else is
+    lambda_vacuum = converter2torch(lambda_vacuum, device).real
 
 
     n_lambda = len(lambda_vacuum)
@@ -139,7 +142,7 @@ def inc_vec_tmm_disp_lstack(
     n_L_ = len(imask) -1
     # matrix of Reflectivity and Transmissivity of the layer interfaces
     requires_grad = True if (D.requires_grad or N.requires_grad) else False
-    L_ = torch.empty((n_stack, n_L_, n_theta, n_lambda, 2, 2)).requires_grad_(
+    L_ = torch.empty((n_stack, n_L_, n_theta, n_lambda, 2, 2), dtype=torch.float64).requires_grad_(
         requires_grad
     )
 
@@ -250,9 +253,9 @@ def inc_vec_tmm_disp_lstack(
         P = torch.exp(
             -4.
             * np.pi
-            * (torch.einsum("ijk,k,i->ijk", n_costheta, 1 / lambda_vacuum, D[:, k]))
+            * (torch.einsum("ijk,k,i->ijk", n_costheta, 1 / lambda_vacuum, D[:, k].real))
         )
-        P_ = torch.zeros((*P.shape, 2, 2)) # [n_stack, n_th, n_wl, 2, 2]
+        P_ = torch.zeros((*P.shape, 2, 2), dtype=P.dtype) # [n_stack, n_th, n_wl, 2, 2]
         P_[..., 0, 0] = 1/P
         P_[..., 1, 1] = P 
         L_[:, i] = torch.einsum("ijklm,ijkmn->ijkln", P_, L_[:, i])

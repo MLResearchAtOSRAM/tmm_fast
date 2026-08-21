@@ -5,10 +5,42 @@ from gymnasium import spaces
 from ..vectorized_tmm_dispersive_multistack import coh_vec_tmm_disp_mstack as tmm
 import matplotlib.pyplot as plt
 import matplotlib
+from matplotlib.lines import Line2D
 
 # Colormap and number of axis ticks used by the heatmaps in render() and render_target()
 HEATMAP_CMAP = 'viridis'
 HEATMAP_TICKS = 10
+
+# Figure geometry of render() and render_target(). 'single' fits one column of a two column
+# paper and stacks the panels, 'double' spans both columns and puts them side by side.
+FIGURE_LAYOUT = 'single'
+FIGURE_GEOMETRY = {
+    'single': {'figsize': (3.6, 5.6), 'nrows': 2, 'ncols': 1,
+               'legend_columns': 3, 'stack_yaxis_right': False},
+    'double': {'figsize': (7.2, 3.4), 'nrows': 1, 'ncols': 2,
+               'legend_columns': 6, 'stack_yaxis_right': True},
+}
+
+
+def _geometry():
+    if FIGURE_LAYOUT not in FIGURE_GEOMETRY:
+        raise ValueError("FIGURE_LAYOUT must be one of '" + "', '".join(sorted(FIGURE_GEOMETRY)) + "'")
+    return FIGURE_GEOMETRY[FIGURE_LAYOUT]
+
+
+def _new_figure(ratios=None):
+    """
+    Creates the two panel figure that render() and render_target() draw into, arranged as
+    FIGURE_LAYOUT asks. ratios weights the panels along the arrangement, and the constrained
+    layout is what keeps titles, labels and the legend from colliding.
+    """
+    geometry = _geometry()
+    keywords = {'nrows': geometry['nrows'], 'ncols': geometry['ncols'],
+                'figsize': geometry['figsize'], 'layout': 'constrained'}
+    if ratios is not None:
+        keywords['height_ratios' if geometry['nrows'] > 1 else 'width_ratios'] = ratios
+    return plt.subplots(**keywords)
+
 
 
 def _heatmap(ax, data, x_range, y_range, vmin=None, vmax=None, cmap=HEATMAP_CMAP, cbar=True):
@@ -81,7 +113,7 @@ class MultiLayerThinFilm(gymnasium.Env):
             target['direction'] holds the angles [deg, °] under consideration and is of shape D
             target['spectrum'] holds the spectrum [m] under consideration and is of shape S
             target['target'] holds the pixel-wise target reflectivity of a MLTF and is of shape [D x S]
-            target['mode'] states whether to use reflectivity' or 'transmittivity'
+            target['mode'] states whether to use 'reflectivity' or 'transmittivity'
         weights : np.array of same shape [D x S]
             This array allows to steer the pixels relative influence on the optimization/reward
         normalization : bool
@@ -197,6 +229,16 @@ class MultiLayerThinFilm(gymnasium.Env):
         assert self.N.shape == tuple([self.number_of_materials, self.wl.shape[0]]), 'N does not match with target!'
 
     def set_cladding(self, substrate=None, ambient=None):
+        """
+        Sets the substrate and ambient that clad every stack. Both default to vacuum of infinite
+        thickness. The outermost refractive indices are forced to be real, as the transfer matrix
+        method requires.
+
+        Parameters:
+        -----------
+        substrate, ambient : dict or None
+            With 'n' of shape [layers x S] and 'd' of shape [layers], as built by create_stack()
+        """
         if substrate is not None:
             self.n_substrate = substrate['n']
             self.d_substrate = substrate['d']
@@ -226,31 +268,32 @@ class MultiLayerThinFilm(gymnasium.Env):
 
     def step(self, action):
         """
-        This method implements the conduction of an action in the environment. Namely, to stack a layer of a
-        particular thickness on top of an existing stack.
+        Stacks one layer of a given material and thickness on top of the current stack.
 
-                Args:
+        Parameters:
+        -----------
+        action : tuple
+            action[0] is the material as an integer, where 0 ends the episode and i > 0 selects
+            row i - 1 of N. action[1] is the normalized thickness in [0, 1], mapped onto
+            [min_thickness, max_thickness].
 
-                  action:                  np.array of shape [2]
-                action[0] holds the material chosen by the agent as an integer value. Note that 0 leads to
-                termination of stacking. action[1] is a float between 0 and 1 and encodes the assigned thickness.
-
-            Rets:
-            self.simulation:         np.array of shape [D x S]
-                holds the reflectivity for each direction and wavelength of a particular stack in its entries.
-            self.n:                  list
-                List of np.arrays of shape [1 x S] that holds the refractive indicies of the stacked layers
-            self.d:                  list
-                List of floats that determine the thicknesses of each stacked layer.
-            one_hot_status:                  np.array of shape [Maximum number of layers L times number of available materials M]
-                Each M-th partition (of L partitions) one-hot encodes a normalized layer thickness and the layer material. In total, this vector encodes the entire stack.
-            handback_reward:             float
-                rates the current stack based on its fullfillment of the target characteristics; can be relative or absolute
-            done:                    Boolean
-                done-flag that determines whether to end stacking or not.
-            []:                      Empty list
-                No info list available
-                """
+        Returns:
+        --------
+        state : list
+            [simulation, n, d, one_hot_status]; simulation is the optical response of shape
+            [D x S], n the refractive indices of the stacked layers, d their thicknesses in
+            meter, and one_hot_status the flat encoding described in one_hot_layer_status()
+        reward : float
+            Rates the stack against the target, see reward_func(). Zero unless the episode ended
+            or sparse_reward is False, and a difference between successive rewards if
+            relative_reward is set
+        done : bool
+            Whether stacking ended, either because material 0 was chosen or because
+            maximum_layers is reached
+        info : list
+            Always empty. Note that this is the pre-gymnasium four value signature; gymnasium
+            expects (observation, reward, terminated, truncated, info)
+        """
 
         done = False
         self.old_reward = self.reward
@@ -259,7 +302,10 @@ class MultiLayerThinFilm(gymnasium.Env):
         else:
             self.layers.append(int(action[0]))
             n_layer = self.N[int(action[0] - 1), :].reshape(1, -1)
-            d_layer = (self.max_thickness - self.min_thickness) * action[1] + self.min_thickness
+            # action[1] is a shape [1] array, both from create_action() and from the Box
+            # action space, and self.d must hold plain floats
+            thickness = np.asarray(action[1]).item()
+            d_layer = (self.max_thickness - self.min_thickness) * thickness + self.min_thickness
             self.n.append(n_layer)
             self.d.append(d_layer)
         cladded_n, cladded_d = self.stack_layers()
@@ -280,6 +326,11 @@ class MultiLayerThinFilm(gymnasium.Env):
         return [self.simulation, self.n, self.d, one_hot_status], handback_reward, done, []
 
     def one_hot_layer_status(self):
+        """
+        Encodes the whole stack as one flat vector of length maximum_layers * (M + 1). Each layer
+        owns one partition of M + 1 entries, in which the entry at its material index holds the
+        normalized thickness and the rest are zero.
+        """
         one_hot_vectors = []
         for layer in range(self.maximum_layers):
             one_hot_vector = np.zeros((self.number_of_materials + 1))
@@ -290,38 +341,35 @@ class MultiLayerThinFilm(gymnasium.Env):
         return one_hot_vectors
 
     def denormalize_thickness(self, t):
+        """Maps a normalized thickness in [0, 1] onto [min_thickness, max_thickness]."""
         t = (self.max_thickness - self.min_thickness) * t + self.min_thickness
         return t
 
     def normalize_thickness(self, t):
+        """Maps a thickness in meter onto [0, 1], the inverse of denormalize_thickness()."""
         t = (t - self.min_thickness) / (self.max_thickness - self.min_thickness)
         return t
 
     def reset(self):
         """
-        This method implements the reset of the environment to a initial state. However, to ease exploration,
-        a defined number of layers can be stacked before handing it to the agent.
+        Resets the environment to an empty stack, or to a random one if set_initial_layers() was
+        used, and simulates it.
 
-                Args:
-
-                  self
-
-            Rets:
-            All of this returns are computed based on the initial stack determined by the user
-            self.simulation:         np.array of shape [D x S]
-                holds the reflectivity for each direction and wavelength of a particular stack in its entries.
-            self.reward:             float
-                rates the current stack based on its fullfillment of the target characteristics
-            self.n:                  list
-                List of np.arrays of shape [1 x S] that holds the refractive indicies of the stacked layers
-            self.d:                  list
-                List of floats that determine the thicknesses of each stacked layer.
-            """
+        Returns:
+        --------
+        state : list
+            [simulation, n, d, one_hot_status], as returned by step()
+        reward : float
+            Zero unless sparse_reward is False, in which case the initial stack is rated
+        info, extra : list
+            Both always empty. Note that gymnasium expects reset(seed, options) returning
+            (observation, info)
+        """
         self.layers = []
         self.n = []
         self.d = []
         if self._initial_nmb_layers > 0:
-            num_layers = random.randint(1, self._initial_nmb_layers - 1)
+            num_layers = random.randint(1, self._initial_nmb_layers)
             for _ in range(num_layers):
                 rnd_material_idx = random.randint(0, self.number_of_materials-1)
                 rnd_material_d = random.uniform(0, 1)
@@ -341,32 +389,39 @@ class MultiLayerThinFilm(gymnasium.Env):
 
     def render(self, conduct_simulation=True, scale=False):
         """
-            This method renders the current multi-layer thin film and associated optical response
-                    Args:
+        Renders the current stack next to its optical response and a material legend.
 
-                      conduct_simulation:   Boolean
-                    states whether to conduct the simulation or use the currently stored
+        Parameters:
+        -----------
+        conduct_simulation : bool
+            Whether to simulate the current stack first instead of plotting the stored result
+        scale : bool
+            Whether to scale the color range to the simulated values rather than to [0, 1]
 
-                Rets:
-                Figure related objects to e.g. envolve them further
-                self.f:         Figure
-                self.axs:             ndarray of shape (2) holding AxesSubplots
-
-                """
+        Returns:
+        --------
+        list
+            [figure, axes], so that the plot can be modified further
+        """
         colors = list(matplotlib.colors.TABLEAU_COLORS.keys())
-        cbar = True
-        if self.f is None:
-            self.f, self.axs = plt.subplots(nrows=1, ncols=3, )
-        else:
-            if plt.fignum_exists(self.f.number):
-                self.axs[0].clear()
-                self.axs[1].clear()
-                self.axs[2].clear()
-                cbar = False
-            else:
-                self.f, self.axs = plt.subplots(nrows=1, ncols=3, )
         assert self.N.shape[0] <= len(colors), 'Not enough colors to illustrate all materials in N!'
-        # plot reflectivity:
+        assert self.wl.shape[0] > 1 or self.angle.shape[0] > 1, 'No rendering for single wavelenght and single direction!'
+        geometry = _geometry()
+
+        # a fresh figure needs the colorbar and the material legend as well; on a redraw the
+        # panels are cleared but both of those live outside them and survive
+        fresh = self.f is None or not plt.fignum_exists(self.f.number)
+        if fresh:
+            self.f, self.axs = _new_figure(ratios=(2, 1))
+            handles = [Line2D([0], [0], color=colors[material], lw=6,
+                              label='Material ' + str(material + 1))
+                       for material in range(self.N.shape[0])]
+            self.f.legend(handles=handles, loc='outside lower center', frameon=False,
+                          fontsize='small', ncol=min(len(handles), geometry['legend_columns']))
+        else:
+            for ax in self.axs:
+                ax.clear()
+
         if conduct_simulation:
             cladded_n, cladded_d = self.stack_layers()
             self.simulation = self.simulate(cladded_n, cladded_d)
@@ -377,144 +432,113 @@ class MultiLayerThinFilm(gymnasium.Env):
         else:
             min_val = 0
             max_val = 1
-        # drawing:
-        assert self.wl.shape[0] > 1 or self.angle.shape[0] > 1, 'No rendering for single wavelenght and single direction!'
+        response = self.mode.capitalize()
+
+        # the optical response, as a spectrum, over angle, or as a heatmap over both
         if self.angle.shape[0] == 1:
-            xaxis = np.linspace(0, self.wl.shape[0], 10, dtype=int)
-            xtickslabels = np.linspace(np.min(self.wl * 10 ** 9), np.max(self.wl * 10 ** 9), 10, dtype=int)
-            plt.sca(self.axs[0])
-            plt.plot(self.simulation.squeeze())
-            plt.xticks(xaxis, xtickslabels)
-            plt.xlabel('Wavelength [nm]')
-            plt.ylabel('Reflectivity [1]')
-            plt.ylim([0, 1.05])
-            plt.title('Reflectivity at incidence angle of ' + str(self.angle[0]) + '°\nReward = ' + str(np.round(self.reward, 4)))
+            self.axs[0].plot(self.wl * 10 ** 9, self.simulation.squeeze())
+            self.axs[0].set_xlabel('Wavelength [nm]')
+            self.axs[0].set_ylabel(response + ' [1]')
+            self.axs[0].set_ylim(0, 1.05)
+            self.axs[0].set_title(response + ' at ' + str(np.round(self.angle[0], 1)) + '°')
         elif self.wl.shape[0] == 1:
-            xaxis = np.linspace(0, self.angle.shape[0], 10, dtype=int)
-            xtickslabels = np.linspace(np.min(self.angle), np.max(self.angle), 10, dtype=int)
-            plt.sca(self.axs[0])
-            plt.plot(self.simulation.squeeze())
-            plt.xticks(xaxis, xtickslabels)
-            plt.xlabel('Angle [deg, °]')
-            plt.ylabel('Reflectivity [1]')
-            plt.ylim([0, 1.05])
-            plt.title('Reflectivity at wavelength ' + str(np.round(self.wl[0] * 10 ** 9, 3)) + ' nm\nReward = ' + str(np.round(self.reward, 4)))
+            self.axs[0].plot(self.angle, self.simulation.squeeze())
+            self.axs[0].set_xlabel('Angle [deg, °]')
+            self.axs[0].set_ylabel(response + ' [1]')
+            self.axs[0].set_ylim(0, 1.05)
+            self.axs[0].set_title(response + ' at ' + str(np.round(self.wl[0] * 10 ** 9, 1)) + ' nm')
         else:
             _heatmap(self.axs[0], self.simulation,
                      x_range=(np.min(self.wl * 10 ** 9), np.max(self.wl * 10 ** 9)),
                      y_range=(np.min(self.angle), np.max(self.angle)),
-                     vmin=min_val, vmax=max_val, cbar=cbar)
-            self.axs[0].set_ylabel('Angle [deg, °]')
+                     vmin=min_val, vmax=max_val, cbar=fresh)
             self.axs[0].set_xlabel('Wavelength [nm]')
-            self.axs[0].set_title('Reflectivity\nReward = ' + str(np.round(self.reward, 4)))
+            self.axs[0].set_ylabel('Angle [deg, °]')
+            self.axs[0].set_title(response)
 
-        # plot stack:
-        plt.sca(self.axs[1])
-        self.axs[1].yaxis.tick_right()
-        self.axs[1].yaxis.set_label_position("right")
+        # the stack itself, one bar segment per layer coloured by its material
+        for layer, material in enumerate(self.layers):
+            self.axs[1].bar(0, self.d[layer], 0.6, bottom=np.sum(self.d[:layer]),
+                            color=colors[int(material) - 1])
+        self.axs[1].set_xlim(-0.5, 0.5)
+        self.axs[1].set_xticks([0])
+        self.axs[1].set_xticklabels([str(self.num_layers) + ' layers'])
+        self.axs[1].set_ylabel('Thickness [m]')
+        self.axs[1].ticklabel_format(axis='y', style='sci', scilimits=(-9, -9))
         self.axs[1].yaxis.grid(linestyle='dotted')
-        # for major ticks
-        self.axs[1].set_xticks([])
-        # for minor ticks
-        self.axs[1].set_xticks([], minor=True)
-        self.axs[1].ticklabel_format(axis='y', style='sci', scilimits=(-9, -9), useOffset=None, useLocale=None, useMathText=None)
-        ind = np.array([1])
-        width = 0.25
-        for layer, nidx in enumerate(self.layers):
-            plt.bar(ind[0], self.d[layer], width, bottom=np.sum(self.d[:layer]), color=colors[int(nidx)-1])
-        num_materials = self.num_layers
-        plt.xticks(ind,
-                   ('Multi-layer thin film\n' + str(num_materials) + ' layers',))
-        plt.ylabel('Thickness [m]')
+        if geometry['stack_yaxis_right']:
+            self.axs[1].yaxis.tick_right()
+            self.axs[1].yaxis.set_label_position('right')
 
-        # # # MATERIAL LEGEND:
-        plt.sca(self.axs[2])
-        plt.axis('off')
-        from matplotlib.lines import Line2D
-        legend_elements = [Line2D([0], [0], color=colors[idx], lw=10, label='Material ' + str(idx+1)) for idx in range(self.N.shape[0])]
-        plt.legend(handles=legend_elements, loc='center right')
-        plt.tight_layout()
+        # the reward belongs to the figure, which keeps it out of the panel titles
+        self.f.suptitle('Reward = ' + str(np.round(self.reward, 4)))
         plt.show(block=False)
         plt.pause(0.1)
         return [self.f, self.axs]
 
     def render_target(self):
+        """
+        Renders the target response next to the weights that steer its influence on the reward.
+
+        Returns:
+        --------
+        list
+            [figure, axes], so that the plot can be modified further
+        """
         assert self.wl.shape[0] > 1 or self.angle.shape[0] > 1, 'No rendering for single wavelenght and single direction!'
-        f_target, axs_target = plt.subplots(nrows=1, ncols=2, )
-        # plot target:
+        f_target, axs_target = _new_figure()
+
         if self.angle.shape[0] == 1:
-            xaxis = np.linspace(0, self.wl.shape[0], 10, dtype=int)
-            xtickslabels = np.linspace(np.min(self.wl * 10 ** 9), np.max(self.wl * 10 ** 9), 10, dtype=int)
-            #target:
-            plt.sca(axs_target[0])
-            plt.plot(self.target.squeeze())
-            plt.xticks(xaxis, xtickslabels)
-            plt.xlabel('Wavelength [nm]')
-            plt.ylabel(self.mode + ' [1]')
-            plt.ylim([0, 1.05])
-            plt.title('Target at incidence angle of ' + str(self.angle[0]) + ' °')
-            #weights
-            plt.sca(axs_target[1])
-            plt.plot(self.weights.squeeze())
-            plt.xticks(xaxis, xtickslabels)
-            plt.xlabel('Wavelength [nm]')
-            plt.ylabel('Weight [1]')
-            plt.ylim([0, 1.05 * np.max(self.weights)])
-            plt.title('Weights at incidence angle of ' + str(self.angle[0]) + ' °')
+            suffix = ' at ' + str(np.round(self.angle[0], 1)) + '°'
+            x, x_label = self.wl * 10 ** 9, 'Wavelength [nm]'
         elif self.wl.shape[0] == 1:
-            xaxis = np.linspace(0, self.angle.shape[0], 10, dtype=int)
-            xtickslabels = np.linspace(np.min(self.angle), np.max(self.angle), 10, dtype=int)
-            #target
-            plt.sca(axs_target[0])
-            plt.plot(self.target.squeeze())
-            plt.xticks(xaxis, xtickslabels)
-            plt.xlabel('Angle [deg, °]')
-            plt.ylabel(self.mode + ' [1]')
-            plt.ylim([0, 1.05])
-            plt.title('Target at wavelength ' + str(np.round(self.wl[0] * 10 ** 9, 3)) + ' nm')
-            # weights
-            plt.sca(axs_target[1])
-            plt.plot(self.weights.squeeze())
-            plt.xticks(xaxis, xtickslabels)
-            plt.xlabel('Angle [deg, °]')
-            plt.ylabel('Weight [1]')
-            plt.ylim([0, 1.05 * np.max(self.weights)])
-            plt.title('Weights at wavelength ' + str(np.round(self.wl[0] * 10 ** 9, 3)) + ' nm')
+            suffix = ' at ' + str(np.round(self.wl[0] * 10 ** 9, 1)) + ' nm'
+            x, x_label = self.angle, 'Angle [deg, °]'
+        else:
+            x = None
+
+        if x is not None:
+            axs_target[0].plot(x, self.target.squeeze())
+            axs_target[0].set_ylabel(self.mode + ' [1]')
+            axs_target[0].set_ylim(0, 1.05)
+            axs_target[0].set_title('Target' + suffix)
+            axs_target[1].plot(x, self.weights.squeeze())
+            axs_target[1].set_ylabel('Weight [1]')
+            axs_target[1].set_ylim(0, 1.05 * np.max(self.weights))
+            axs_target[1].set_title('Weights' + suffix)
+            for ax in axs_target:
+                ax.set_xlabel(x_label)
         else:
             wl_range = (np.min(self.wl * 10 ** 9), np.max(self.wl * 10 ** 9))
             angle_range = (np.min(self.angle), np.max(self.angle))
-            # target:
             _heatmap(axs_target[0], self.target, x_range=wl_range, y_range=angle_range, vmin=0, vmax=1)
-            axs_target[0].set_ylabel('Angle [deg, °]')
-            axs_target[0].set_xlabel('Wavelength [nm]')
-            axs_target[0].set_title('Target over angle and spectrum')
-            # weights:
             _heatmap(axs_target[1], self.weights, x_range=wl_range, y_range=angle_range, vmin=0)
-            axs_target[1].set_ylabel('Angle [deg, °]')
-            axs_target[1].set_xlabel('Wavelength [nm]')
-            axs_target[1].set_title('Weights over angle and spectrum')
-            plt.tight_layout()
+            axs_target[0].set_title('Target')
+            axs_target[1].set_title('Weights')
+            for ax in axs_target:
+                ax.set_xlabel('Wavelength [nm]')
+                ax.set_ylabel('Angle [deg, °]')
+
         plt.show(block=False)
         plt.pause(0.1)
         return [f_target, axs_target]
 
     def simulate(self, n, d):
         """
-        This method implements the simulation of the reflectivity of a particular stack. The TMM and its
-        parallelization is based on previous work of Alexander Luce.
+        Simulates the optical response of one cladded stack, averaged over s and p polarization.
 
-                Args:
+        Parameters:
+        -----------
+        n : np.array of shape [(Sub + L + Am) x S]
+            Refractive indices of substrate, stacked layers and ambient
+        d : np.array of shape [Sub + L + Am]
+            The corresponding thicknesses in meter
 
-                 n:                     np.array of shape [(Sub + L + Am) x S]
-                n holds the refractive indicies of L stacked layers by the agent, including substrate and ambient.
-            d:                     np.array of shape Sub + L + Am
-                d holds the thicknesses in meter of the layers
-
-            Rets:
-
-            r:                     np.array of shape [D x S]
-                r holds the pixel-wise reflectivity values for the directions and wavelengths under consideration
-            """
+        Returns:
+        --------
+        np.array of shape [D x S]
+            Reflectivity, or transmissivity if mode says so, per angle and wavelength
+        """
         result_dicts = tmm('s', n, d, (np.pi/180)*self.angle, self.wl)
         result_dictp = tmm('p', n, d, (np.pi/180)*self.angle, self.wl)
         if self.mode == 'reflectivity':
@@ -529,6 +553,10 @@ class MultiLayerThinFilm(gymnasium.Env):
             return t
 
     def create_action(self, mat_number, thickness, is_normalized=True):
+        """
+        Builds an action for step() from a material index and a thickness, the latter either
+        normalized to [0, 1] or given in meter.
+        """
         if not is_normalized:
             normalized_thickness = (thickness - self.min_thickness) / (self.max_thickness - self.min_thickness)
         else:
@@ -537,10 +565,29 @@ class MultiLayerThinFilm(gymnasium.Env):
         return action
 
     def create_stack(self, material_list, thickness_list=None):
+        """
+        Builds refractive indices and thicknesses for a list of materials, e.g. to define a
+        substrate or an ambient for set_cladding().
+
+        Parameters:
+        -----------
+        material_list : list of int
+            Material indices, one-based as in the actions passed to step()
+        thickness_list : list of float or None
+            The corresponding thicknesses in meter, semi-infinite if left out
+
+        Returns:
+        --------
+        n : np.array of shape [len(material_list) x S]
+        d : np.array of shape [len(material_list)]
+        dict
+            {'n': n, 'd': d}, ready to hand to set_cladding()
+        """
         if thickness_list is not None:
             t = np.stack((thickness_list))
         else:
-            t = np.empty()
+            # without thicknesses the layers are semi-infinite, as the default cladding is
+            t = np.full(len(material_list), np.inf)
         n = []
         for material in material_list:
             n.append(self.N[material-1, :])
@@ -550,9 +597,18 @@ class MultiLayerThinFilm(gymnasium.Env):
 
     def stack_layers(self, d_array=None, n_array=None):
         """
-        This method clads the stack suggested by the agent with the pre-defined cladding.
-        The returned arrays n, d describe a particular stack, it includes the cladding.
-            """
+        Clads a stack with the substrate and ambient set by set_cladding().
+
+        Parameters:
+        -----------
+        d_array, n_array : array_like or None
+            A stack to clad instead of the one currently held by the environment
+
+        Returns:
+        --------
+        cladded_n : np.array of shape [(Sub + L + Am) x S]
+        cladded_d : np.array of shape [Sub + L + Am]
+        """
 
         if n_array is not None:
             n_list = list(n_array)
@@ -576,21 +632,23 @@ class MultiLayerThinFilm(gymnasium.Env):
         return cladded_n.squeeze(), cladded_d.squeeze()
 
     def steps_made(self):
-        """
-        Returns the number of steps made in the environment
-            """
+        """Number of layers stacked so far; a step that ended the episode adds none."""
         return len(self.layers)
 
     def reset_reward_track(self):
-        """
-        To reset private property _reward_track.
-            """
+        """Clears the tracked baseline errors behind baseline_mse."""
         self._reward_track = []
 
     def set_initial_layers(self, nmb_of_initial_layers):
         """
-        Setter for the private property that specifies an initial number of layers during environment reset
-            """
+        Sets the upper bound on how many random layers reset() stacks before handing the
+        environment to the agent; it draws between one and this many.
+
+        Raises:
+        -------
+        ValueError
+            If more initial layers than maximum_layers are requested
+        """
         if nmb_of_initial_layers > self.maximum_layers:
             raise ValueError("Initial number of layers already exceeds total number of allowed layers!")
         self._initial_nmb_layers = nmb_of_initial_layers
@@ -598,8 +656,9 @@ class MultiLayerThinFilm(gymnasium.Env):
     @property
     def baseline_mse(self):
         """
-        Returns the baseline mse for reward computation/transformation (See publication for details)
-            """
+        Reference error that the reward is normalized against, see reward_func(). Currently a
+        constant 0.4; the commented out alternative averages the tracked errors instead.
+        """
         if len(self._reward_track) == 0:
             return 0.4
         else:
@@ -608,7 +667,8 @@ class MultiLayerThinFilm(gymnasium.Env):
     @property
     def num_layers(self)->float:
         """
-        Returns the explicit number of layers of a stack
+        Number of layers in the stack, counting a run of consecutive layers of the same material
+        as one because they are physically indistinguishable.
         """
         if len(self.layers) == 0:
             return 0
@@ -624,7 +684,29 @@ class MultiLayerThinFilm(gymnasium.Env):
     @staticmethod
     def reward_func(reflectivity, target, weights=None, baseline_mse=1.0, normalization=False, low_reward=0.01, high_reward=1.0):
         """
-        An unconstrained reward computation based on the observed reflectivity and the given target.
+        Rates an optical response against the target.
+
+        Parameters:
+        -----------
+        reflectivity : np.array of shape [D x S]
+            The simulated response; the name is historical, it holds transmissivity in that mode
+        target : np.array of shape [D x S]
+            The desired response
+        weights : np.array of shape [D x S] or None
+            Relative importance of each pixel, where zero drops a pixel from the mean
+        baseline_mse : float
+            The error that maps onto low_reward when normalization is set
+        normalization : bool
+            Whether to map the error exponentially onto [low_reward, high_reward] instead of
+            taking exp(-error)
+        low_reward, high_reward : float
+            Reward at baseline_mse and at zero error respectively
+
+        Returns:
+        --------
+        reward : float
+        baseline_error : float
+            Weighted mean absolute deviation from the target
         """
         if weights is None:
             weights = np.ones_like(target)
