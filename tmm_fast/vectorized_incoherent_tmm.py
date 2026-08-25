@@ -164,6 +164,7 @@ def inc_vec_tmm_disp_lstack(
     snell_theta = SnellLaw_vectorized(
         N.type(torch.complex128), theta.type(torch.complex128)
     )  # propagation angle in every layer
+    cos_snell_theta = torch.cos(snell_theta)
 
     # first, the coherent substacks are evaluated with the adjacent incoherent stacks as input 
     # and output layer. Therefore, Im(N) of the incoherent layers are set to zero for the 
@@ -176,6 +177,8 @@ def inc_vec_tmm_disp_lstack(
         forward = coh_tmm(
             pol, N_, d, snell_theta[:, :, m_[0], :], lambda_vacuum, device,
             _validate=False,
+            _snell_thetas=snell_theta[:, :, m_, :],
+            _snell_cosines=cos_snell_theta[:, :, m_, :],
         )
         # the substack must be evaluated in both directions since we can have an incoming wave from the output side
         # (a reflection from an incoherent layer) and Reflectivit/Transmissivity can be different depending on the direction
@@ -187,6 +190,8 @@ def inc_vec_tmm_disp_lstack(
             lambda_vacuum,
             device,
             _validate=False,
+            _snell_thetas=snell_theta[:, :, m_, :].flip([2]),
+            _snell_cosines=cos_snell_theta[:, :, m_, :].flip([2]),
         )
         T_f = forward["T"]  # [n_stack, n_lambda, n_theta]
         T_b = backward["T"]
@@ -217,6 +222,8 @@ def inc_vec_tmm_disp_lstack(
                 N[:, k + 1][:, None],
                 snell_theta[:, :, k][:, :, None],
                 snell_theta[:, :, k + 1][:, :, None],
+                cos_snell_theta[:, :, k][:, :, None],
+                cos_snell_theta[:, :, k + 1][:, :, None],
             )[:, :, :, 0]
             T_f = T_from_t_vec(
                 pol,
@@ -225,6 +232,8 @@ def inc_vec_tmm_disp_lstack(
                 N[:, k + 1],
                 snell_theta[:, :, k],
                 snell_theta[:, :, k + 1],
+                cos_snell_theta[:, :, k],
+                cos_snell_theta[:, :, k + 1],
             )
             tb = interface_t_vec(
                 pol,
@@ -232,6 +241,8 @@ def inc_vec_tmm_disp_lstack(
                 N[:, k][:, None],
                 snell_theta[:, :, k + 1][:, :, None],
                 snell_theta[:, :, k][:, :, None],
+                cos_snell_theta[:, :, k + 1][:, :, None],
+                cos_snell_theta[:, :, k][:, :, None],
             )[:, :, :, 0]
             T_b = T_from_t_vec(
                 pol,
@@ -240,6 +251,8 @@ def inc_vec_tmm_disp_lstack(
                 N[:, k],
                 snell_theta[:, :, k + 1],
                 snell_theta[:, :, k],
+                cos_snell_theta[:, :, k + 1],
+                cos_snell_theta[:, :, k],
             )
             rf = interface_r_vec(
                 pol,
@@ -247,6 +260,8 @@ def inc_vec_tmm_disp_lstack(
                 N[:, k + 1][:, None],
                 snell_theta[:, :, k][:, :, None],
                 snell_theta[:, :, k + 1][:, :, None],
+                cos_snell_theta[:, :, k][:, :, None],
+                cos_snell_theta[:, :, k + 1][:, :, None],
             )[:, :, :, 0]
             R_f = R_from_r_vec(rf)
             rb = interface_r_vec(
@@ -255,6 +270,8 @@ def inc_vec_tmm_disp_lstack(
                 N[:, k][:, None],
                 snell_theta[:, :, k + 1][:, :, None],
                 snell_theta[:, :, k][:, :, None],
+                cos_snell_theta[:, :, k + 1][:, :, None],
+                cos_snell_theta[:, :, k][:, :, None],
             )[:, :, :, 0]
             R_b = R_from_r_vec(rb)
 
@@ -265,7 +282,7 @@ def inc_vec_tmm_disp_lstack(
     P_ = None
     for i, k in enumerate(imask[1:-1], 1):
         n_costheta = torch.einsum(
-            "ik,ijk->ijk", N[:, k], torch.cos(snell_theta[:, :, k])
+            "ik,ijk->ijk", N[:, k], cos_snell_theta[:, :, k]
         ).imag  # [n_stack, n_theta, n_lambda]
         P = torch.exp(
             -4.

@@ -265,6 +265,29 @@ def test_mixed_solver_validates_once_before_coherent_substacks(monkeypatch):
     assert torch.isfinite(result['R']).all()
 
 
+def test_mixed_solver_reuses_parent_snell_grid(monkeypatch):
+    snell_calls = []
+    original = coherent_module.SnellLaw_vectorized
+
+    def record_snell_call(*args, **kwargs):
+        snell_calls.append(None)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(coherent_module, 'SnellLaw_vectorized', record_snell_call)
+    monkeypatch.setattr(incoherent_module, 'SnellLaw_vectorized', record_snell_call)
+    wl = torch.linspace(500e-9, 700e-9, 3, dtype=torch.double)
+    theta = torch.tensor([0.0, 0.3], dtype=torch.double)
+    N = torch.tensor(
+        [1.0, 1.8 + 0.01j, 1.4, 2.1 + 0.02j, 1.5], dtype=torch.complex128
+    )[None, :, None].repeat(1, 1, wl.numel())
+    D = torch.tensor([[np.inf, 120e-9, 2e-6, 90e-9, np.inf]], dtype=torch.double)
+
+    result = inc_tmm('s', N, D, [[1], [3]], theta, wl)
+
+    assert len(snell_calls) == 1
+    assert torch.isfinite(result['R']).all()
+
+
 def test_incoherent_public_entry_point_validates_injection_medium():
     wl = torch.tensor([600e-9], dtype=torch.double)
     theta = torch.tensor([0.2], dtype=torch.double)

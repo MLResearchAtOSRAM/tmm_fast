@@ -15,7 +15,9 @@ def coh_vec_tmm_disp_mstack(pol:str,
                             device:Optional[Union[str, torch.device]]=None,
                             timer:bool=False,
                             *,
-                            _validate:bool=True) -> dict:
+                            _validate:bool=True,
+                            _snell_thetas:Optional[torch.Tensor]=None,
+                            _snell_cosines:Optional[torch.Tensor]=None) -> dict:
     """
     Parallelized computation of reflection and transmission for coherent light spectra that traverse
     a bunch of multilayer thin-films with dispersive materials.
@@ -135,10 +137,19 @@ def coh_vec_tmm_disp_mstack(pol:str,
 
     # SnellThetas is a tensor, for each stack and layer, the angle that the light travels
     # through the layer. Computed with Snell's law. Note that the "angles" may be complex!
-    SnellThetas = SnellLaw_vectorized(N, Theta, validate=_validate)
+    if _snell_thetas is None:
+        SnellThetas = SnellLaw_vectorized(N, Theta, validate=_validate)
+        cos_SnellThetas = torch.cos(SnellThetas)
+    else:
+        assert _snell_thetas.shape == (num_stacks, num_angles, num_layers, num_wavelengths)
+        SnellThetas, cos_SnellThetas = select_forward_angles(
+            N, _snell_thetas, _snell_cosines, validate=_validate
+        )
+        if cos_SnellThetas is None:
+            cos_SnellThetas = torch.cos(SnellThetas)
 
 
-    theta = 2 * np.pi * torch.einsum('skij,sij->skij', torch.cos(SnellThetas), N)  # [theta,d, lambda]
+    theta = 2 * np.pi * torch.einsum('skij,sij->skij', cos_SnellThetas, N)  # [theta,d, lambda]
     kz_list = torch.einsum('sijk,k->skij', theta, 1 / lambda_vacuum)  # [lambda, theta, d]
 
     # kz is the z-component of (complex) angular wavevector for the forward-moving
@@ -164,21 +175,33 @@ def coh_vec_tmm_disp_mstack(pol:str,
     # t_list and r_list hold the transmission and reflection coefficients from
     # the Fresnel Equations
 
-    t_list = interface_t_vec(pol, N[:, :-1, :], N[:, 1:, :], SnellThetas[:, :, :-1, :], SnellThetas[:, :, 1:, :])
-    r_list = interface_r_vec(pol, N[:, :-1, :], N[:, 1:, :], SnellThetas[:, :, :-1, :], SnellThetas[:, :, 1:, :])
+    t_list = interface_t_vec(
+        pol, N[:, :-1, :], N[:, 1:, :], SnellThetas[:, :, :-1, :],
+        SnellThetas[:, :, 1:, :], cos_SnellThetas[:, :, :-1, :],
+        cos_SnellThetas[:, :, 1:, :]
+    )
+    r_list = interface_r_vec(
+        pol, N[:, :-1, :], N[:, 1:, :], SnellThetas[:, :, :-1, :],
+        SnellThetas[:, :, 1:, :], cos_SnellThetas[:, :, :-1, :],
+        cos_SnellThetas[:, :, 1:, :]
+    )
     
     # A ist the propagation term for matrix optic and holds the appropriate accumulated phase for the thickness
     # of each layer
     A = torch.exp(1j * delta)
     F = r_list[:, :, :, 1:]
+    A = A.permute(0, 2, 1, 3)
+    inverse_A = 1 / (A + np.finfo(float).eps)
+    inverse_t = 1 / t_list[:, :, :, 1:]
+    F_over_t = F * inverse_t
     
     # M_list holds the transmission and reflection matrices from matrix-optics 
     
     M_list = torch.zeros((num_stacks, num_angles, num_wavelengths, num_layers, 2, 2), dtype=torch.complex128, device=device)
-    M_list[:, :, :, 1:-1, 0, 0] = torch.einsum('shji,sjhi->sjhi', 1 / (A + np.finfo(float).eps), 1 / t_list[:, :, :, 1:])
-    M_list[:, :, :, 1:-1, 0, 1] = torch.einsum('shji,sjhi->sjhi', 1 / (A + np.finfo(float).eps), F / t_list[:, :, :, 1:])
-    M_list[:, :, :, 1:-1, 1, 0] = torch.einsum('shji,sjhi->sjhi', A, F / t_list[:, :, :, 1:])
-    M_list[:, :, :, 1:-1, 1, 1] = torch.einsum('shji,sjhi->sjhi', A, 1 / t_list[:, :, :, 1:])
+    M_list[:, :, :, 1:-1, 0, 0] = inverse_A * inverse_t
+    M_list[:, :, :, 1:-1, 0, 1] = inverse_A * F_over_t
+    M_list[:, :, :, 1:-1, 1, 0] = A * F_over_t
+    M_list[:, :, :, 1:-1, 1, 1] = A * inverse_t
     Mtilde = torch.empty((num_stacks, num_angles, num_wavelengths, 2, 2), dtype=torch.complex128, device=device)
     Mtilde[:, :, :] = make_2x2_tensor(1, 0, 0, 1, dtype=torch.complex128)
 
@@ -193,7 +216,7 @@ def coh_vec_tmm_disp_mstack(pol:str,
     M_r0[:, :, :, 0, 1] = r_list[:, :, :, 0]
     M_r0[:, :, :, 1, 0] = r_list[:, :, :, 0]
     M_r0[:, :, :, 1, 1] = 1
-    M_r0 = torch.einsum('sijkl,sij->sijkl', M_r0, 1 / t_list[:, :, :, 0])
+    M_r0 *= (1 / t_list[:, :, :, 0])[..., None, None]
 
     Mtilde = torch.einsum('shijk,shikl->shijl', M_r0, Mtilde)
 
@@ -204,7 +227,10 @@ def coh_vec_tmm_disp_mstack(pol:str,
     # Net transmitted and reflected power, as a proportion of the incoming light
     # power.
     R = R_from_r_vec(r)
-    T = T_from_t_vec(pol, t, N[:, 0], N[:, -1], SnellThetas[:, :, 0], SnellThetas[:, :, -1])
+    T = T_from_t_vec(
+        pol, t, N[:, 0], N[:, -1], SnellThetas[:, :, 0], SnellThetas[:, :, -1],
+        cos_SnellThetas[:, :, 0], cos_SnellThetas[:, :, -1]
+    )
 
     if squeezed and r.shape[0] == 1:
         r = torch.reshape(r, (r.shape[1], r.shape[2]))
@@ -256,20 +282,28 @@ def SnellLaw_vectorized(n, th, validate=True):
     # The first and last entry need to be the forward angle (the intermediate
     # layers don't matter, see https://arxiv.org/abs/1603.02720 Section 5)
 
-    angles[:, :, 0] = torch.where(
-        is_not_forward_angle(n[:, 0], angles[:, :, 0], validate=validate).bool(),
-        pi - angles[:, :, 0],
-        angles[:, :, 0],
-    )
-    angles[:, :, -1] = torch.where(
-        is_not_forward_angle(n[:, -1], angles[:, :, -1], validate=validate).bool(),
-        pi - angles[:, :, -1],
-        angles[:, :, -1],
-    )
-
+    angles, _ = select_forward_angles(n, angles, validate=validate)
     return angles
 
-def is_not_forward_angle(n, theta, validate=True):
+def select_forward_angles(n, angles, cosines=None, validate=True):
+    angles = angles.clone()
+    cosines = None if cosines is None else cosines.clone()
+    for layer in (0, -1):
+        layer_cosines = None if cosines is None else cosines[:, :, layer]
+        backward = is_not_forward_angle(
+            n[:, layer], angles[:, :, layer], layer_cosines, validate=validate
+        ).bool()
+        angles[:, :, layer] = torch.where(
+            backward, pi - angles[:, :, layer], angles[:, :, layer]
+        )
+        if cosines is not None:
+            cosines[:, :, layer] = torch.where(
+                backward, -cosines[:, :, layer], cosines[:, :, layer]
+            )
+    return angles, cosines
+
+
+def is_not_forward_angle(n, theta, cos_theta=None, validate=True):
     """
     if a wave is traveling at angle theta from normal in a medium with index n,
     calculate whether or not this is the forward-traveling wave (i.e., the one
@@ -289,7 +323,8 @@ def is_not_forward_angle(n, theta, validate=True):
             "n: " + str(n) + "   angle: " + str(theta)
         )
     n = n.unsqueeze(1)
-    ncostheta = torch.cos(theta) * n
+    cos_theta = torch.cos(theta) if cos_theta is None else cos_theta
+    ncostheta = cos_theta * n
     assert ncostheta.shape == theta.shape, 'ncostheta and theta shape doesnt match'
     # For evanescent decay or a lossy medium the decaying wave is the forward-moving one,
     # everywhere else it is the one with a positive Poynting vector. The Poynting vector is
@@ -303,7 +338,7 @@ def is_not_forward_angle(n, theta, validate=True):
 
     if validate:
         tolerance = 100 * EPSILON
-        conjugate_ncostheta = (n * torch.cos(torch.conj(theta))).real
+        conjugate_ncostheta = (n * torch.conj(cos_theta)).real
         valid_forward = ~answer | (
             (ncostheta.imag > -tolerance)
             & (ncostheta.real > -tolerance)
@@ -363,7 +398,7 @@ def is_not_forward_angle(n, theta, validate=True):
     # torch.testing.assert_close((~answer_tmm).type(torch.float), answer)
     return answer
 
-def interface_r_vec(polarization, n_i, n_f, th_i, th_f):
+def interface_r_vec(polarization, n_i, n_f, th_i, th_f, cos_th_i=None, cos_th_f=None):
     """
     reflection amplitude (from Fresnel equations)
     polarization is either "s" or "p" for polarization
@@ -371,18 +406,20 @@ def interface_r_vec(polarization, n_i, n_f, th_i, th_f):
     th_i, th_f are (complex) propegation angle for incident and final
     (in radians, where 0=normal). "th" stands for "theta".
     """
+    cos_th_i = torch.cos(th_i) if cos_th_i is None else cos_th_i
+    cos_th_f = torch.cos(th_f) if cos_th_f is None else cos_th_f
     if polarization == 's':
-        ni_thi = torch.einsum('sij,skij->skji', n_i, torch.cos(th_i))
-        nf_thf = torch.einsum('sij,skij->skji', n_f, torch.cos(th_f))
+        ni_thi = torch.einsum('sij,skij->skji', n_i, cos_th_i)
+        nf_thf = torch.einsum('sij,skij->skji', n_f, cos_th_f)
         return (ni_thi - nf_thf) / (ni_thi + nf_thf)
     elif polarization == 'p':
-        nf_thi = torch.einsum('sij,skij->skji', n_f, torch.cos(th_i))
-        ni_thf = torch.einsum('sij,skij->skji', n_i, torch.cos(th_f))
+        nf_thi = torch.einsum('sij,skij->skji', n_f, cos_th_i)
+        ni_thf = torch.einsum('sij,skij->skji', n_i, cos_th_f)
         return (nf_thi - ni_thf) / (nf_thi + ni_thf)
     else:
         raise ValueError("Polarization must be 's' or 'p'")
 
-def interface_t_vec(polarization, n_i, n_f, th_i, th_f):
+def interface_t_vec(polarization, n_i, n_f, th_i, th_f, cos_th_i=None, cos_th_f=None):
     """
     transmission amplitude (frem Fresnel equations)
     polarization is either "s" or "p" for polarization
@@ -390,14 +427,16 @@ def interface_t_vec(polarization, n_i, n_f, th_i, th_f):
     th_i, th_f are (complex) propegation angle for incident and final
     (in radians, where 0=normal). "th" stands for "theta".
     """
+    cos_th_i = torch.cos(th_i) if cos_th_i is None else cos_th_i
+    cos_th_f = torch.cos(th_f) if cos_th_f is None else cos_th_f
     if polarization == 's':
-        ni_thi = torch.einsum('sij,skij->skji', n_i, torch.cos(th_i))
-        nf_thf = torch.einsum('sij,skij->skji', n_f, torch.cos(th_f))
+        ni_thi = torch.einsum('sij,skij->skji', n_i, cos_th_i)
+        nf_thf = torch.einsum('sij,skij->skji', n_f, cos_th_f)
         return 2 * ni_thi / (ni_thi + nf_thf)
     elif polarization == 'p':
-        nf_thi = torch.einsum('sij,skij->skji', n_f, torch.cos(th_i))
-        ni_thf = torch.einsum('sij,skij->skji', n_i, torch.cos(th_f))
-        ni_thi = torch.einsum('sij,skij->skji', n_i, torch.cos(th_i))
+        nf_thi = torch.einsum('sij,skij->skji', n_f, cos_th_i)
+        ni_thf = torch.einsum('sij,skij->skji', n_i, cos_th_f)
+        ni_thi = torch.einsum('sij,skij->skji', n_i, cos_th_i)
         return 2 * ni_thi / (nf_thi + ni_thf)
     else:
         raise ValueError("Polarization must be 's' or 'p'")
@@ -408,7 +447,7 @@ def R_from_r_vec(r):
     """
     return abs(r) ** 2
 
-def T_from_t_vec(pol, t, n_i, n_f, th_i, th_f):
+def T_from_t_vec(pol, t, n_i, n_f, th_i, th_f, cos_th_i=None, cos_th_f=None):
     """
     Calculate transmitted power T, starting with transmission amplitude t.
 
@@ -427,14 +466,16 @@ def T_from_t_vec(pol, t, n_i, n_f, th_i, th_f):
     See manual for discussion of formulas
     """
 
+    cos_th_i = torch.cos(th_i) if cos_th_i is None else cos_th_i
+    cos_th_f = torch.cos(th_f) if cos_th_f is None else cos_th_f
     if pol == 's':
-        ni_thi = torch.real(torch.cos(th_i) * n_i.unsqueeze(1))
-        nf_thf = torch.real(torch.cos(th_f) * n_f.unsqueeze(1))
+        ni_thi = torch.real(cos_th_i * n_i.unsqueeze(1))
+        nf_thf = torch.real(cos_th_f * n_f.unsqueeze(1))
         return (abs(t ** 2) * ((nf_thf) / (ni_thi)))
 
     elif pol == 'p':
-        ni_thi = torch.real(torch.conj(torch.cos(th_i)) * n_i.unsqueeze(1))
-        nf_thf = torch.real(torch.conj(torch.cos(th_f)) * n_f.unsqueeze(1))
+        ni_thi = torch.real(torch.conj(cos_th_i) * n_i.unsqueeze(1))
+        nf_thf = torch.real(torch.conj(cos_th_f) * n_f.unsqueeze(1))
         return (abs(t ** 2) * ((nf_thf) / (ni_thi)))
 
     else:
