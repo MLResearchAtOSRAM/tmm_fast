@@ -59,7 +59,10 @@ dev = [
 testpaths = ["tests"]
 # render() calls plt.show(), which the Agg backend the tests use cannot honour
 filterwarnings = ["ignore:FigureCanvasAgg is non-interactive"]
-markers = ["slow: scalar reference grids and figure rendering; -m 'not slow' is the fast inner loop"]
+markers = [
+    "slow: scalar reference grids and figure rendering; -m 'not slow' is the fast inner loop",
+    "performance: opt-in timing tests; use --run-performance to run",
+]
 
 [tool.setuptools.packages.find]
 include = ["tmm_fast*"]
