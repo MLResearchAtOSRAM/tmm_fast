@@ -110,8 +110,10 @@ def coh_vec_tmm_disp_mstack(pol:str,
     return_numpy = not any(torch.is_tensor(value) for value in (N, T, Theta, lambda_vacuum))
     device = resolve_device(N, device)
     N = converter2torch(N, device)
-    T = converter2torch(T, device)
-    lambda_vacuum = torch.atleast_1d(converter2torch(lambda_vacuum, device))
+    T = converter2torch(T, device, dtype=torch.float64)
+    lambda_vacuum = torch.atleast_1d(
+        converter2torch(lambda_vacuum, device, dtype=torch.float64)
+    )
     Theta = torch.atleast_1d(converter2torch(Theta, device))
     # T tells a single stack, of shape [L], apart from a batch of them, of shape [S x L].
     # N follows suit and may additionally come without the wavelength axis if the materials
@@ -188,37 +190,34 @@ def coh_vec_tmm_disp_mstack(pol:str,
     
     # A ist the propagation term for matrix optic and holds the appropriate accumulated phase for the thickness
     # of each layer
-    A = torch.exp(1j * delta)
+    A = torch.exp(1j * delta).permute(0, 2, 1, 3)
     F = r_list[:, :, :, 1:]
-    A = A.permute(0, 2, 1, 3)
-    inverse_A = 1 / (A + np.finfo(float).eps)
-    inverse_t = 1 / t_list[:, :, :, 1:]
-    F_over_t = F * inverse_t
-    
-    # M_list holds the transmission and reflection matrices from matrix-optics 
-    
-    M_list = torch.zeros((num_stacks, num_angles, num_wavelengths, num_layers, 2, 2), dtype=torch.complex128, device=device)
-    M_list[:, :, :, 1:-1, 0, 0] = inverse_A * inverse_t
-    M_list[:, :, :, 1:-1, 0, 1] = inverse_A * F_over_t
-    M_list[:, :, :, 1:-1, 1, 0] = A * F_over_t
-    M_list[:, :, :, 1:-1, 1, 1] = A * inverse_t
-    Mtilde = torch.empty((num_stacks, num_angles, num_wavelengths, 2, 2), dtype=torch.complex128, device=device)
-    Mtilde[:, :, :] = make_2x2_tensor(1, 0, 0, 1, dtype=torch.complex128)
 
-    # contract the M_list matrix along the dimension of the layers, all
-    for i in range(1, num_layers - 1):
-        Mtilde = torch.einsum('sijkl,sijlm->sijkm', Mtilde, M_list[:, :, :, i])
+    batch_shape = (num_stacks, num_angles, num_wavelengths)
+    Mtilde = torch.eye(2, dtype=torch.complex128, device=device).expand(*batch_shape, 2, 2)
+    for i in range(num_layers - 2):
+        inverse_A = 1 / (A[..., i] + np.finfo(float).eps)
+        inverse_t = 1 / t_list[..., i + 1]
+        F_over_t = F[..., i] * inverse_t
+        layer_matrix = torch.stack(
+            (
+                torch.stack((inverse_A * inverse_t, inverse_A * F_over_t), dim=-1),
+                torch.stack((A[..., i] * F_over_t, A[..., i] * inverse_t), dim=-1),
+            ),
+            dim=-2,
+        )
+        Mtilde = torch.matmul(Mtilde, layer_matrix)
 
-    # M_r0 accounts for the first and last stack where the translation coefficients are 1
-    # todo: why compute separately?
-    M_r0 = torch.empty((num_stacks, num_angles, num_wavelengths, 2, 2), dtype=torch.complex128, device=device)
-    M_r0[:, :, :, 0, 0] = 1
-    M_r0[:, :, :, 0, 1] = r_list[:, :, :, 0]
-    M_r0[:, :, :, 1, 0] = r_list[:, :, :, 0]
-    M_r0[:, :, :, 1, 1] = 1
-    M_r0 *= (1 / t_list[:, :, :, 0])[..., None, None]
-
-    Mtilde = torch.einsum('shijk,shikl->shijl', M_r0, Mtilde)
+    inverse_t0 = 1 / t_list[..., 0]
+    reflected_t0 = r_list[..., 0] * inverse_t0
+    M_r0 = torch.stack(
+        (
+            torch.stack((inverse_t0, reflected_t0), dim=-1),
+            torch.stack((reflected_t0, inverse_t0), dim=-1),
+        ),
+        dim=-2,
+    )
+    Mtilde = torch.matmul(M_r0, Mtilde)
 
     # Net complex transmission and reflection amplitudes
     r = Mtilde[:, :, :, 1, 0] / (Mtilde[:, :, :, 0, 0] + np.finfo(float).eps)
@@ -489,7 +488,9 @@ def resolve_device(data, device: Optional[Union[str, torch.device]]) -> torch.de
     return torch.device('cpu')
 
 
-def converter2torch(data, device: Union[str, torch.device]) -> torch.Tensor:
+def converter2torch(
+    data, device: Union[str, torch.device], dtype: torch.dtype = torch.complex128
+) -> torch.Tensor:
     '''
     Checks the datatype of data to torch.tensor and moves the tensor to the device.
 
@@ -501,10 +502,17 @@ def converter2torch(data, device: Union[str, torch.device]) -> torch.Tensor:
         either 'cpu' or 'cuda'
     '''
     if torch.is_tensor(data):
-        return data.to(device=device, dtype=torch.complex128)
+        if dtype == torch.float64 and torch.is_complex(data):
+            data = data.real
+        return data.to(device=device, dtype=dtype)
     try:
         array = np.asarray(data)
-        return torch.as_tensor(array.copy(), dtype=torch.complex128, device=device)
+        if dtype == torch.float64 and np.iscomplexobj(array):
+            array = array.real
+        try:
+            return torch.as_tensor(array, dtype=dtype, device=device)
+        except (ValueError, RuntimeError):
+            return torch.as_tensor(array.copy(), dtype=dtype, device=device)
     except (TypeError, ValueError, RuntimeError) as error:
         raise ValueError('Inputs must be tensors, numpy arrays, scalars, or array-like values') from error
 
@@ -552,16 +560,3 @@ def check_inputs(N, T, lambda_vacuum, theta):
     
     
     
-
-
-def make_2x2_tensor(a, b, c, d, dtype=float):
-    """
-    Makes a 2x2 numpy array of [[a,b],[c,d]]
-    Same as "numpy.array([[a,b],[c,d]], dtype=float)", but ten times faster
-    """
-    my_array = torch.empty((2, 2), dtype=dtype)
-    my_array[0, 0] = a
-    my_array[0, 1] = b
-    my_array[1, 0] = c
-    my_array[1, 1] = d
-    return my_array

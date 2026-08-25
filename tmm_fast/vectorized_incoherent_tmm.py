@@ -3,10 +3,6 @@ import numpy as np
 from .vectorized_tmm_dispersive_multistack import coh_vec_tmm_disp_mstack as coh_tmm
 from .vectorized_tmm_dispersive_multistack import (
     SnellLaw_vectorized,
-    interface_r_vec,
-    interface_t_vec,
-    T_from_t_vec,
-    R_from_r_vec,
     converter2torch,
     converter2numpy,
     resolve_device,
@@ -25,6 +21,7 @@ def inc_vec_tmm_disp_lstack(
     lambda_vacuum: Union[np.ndarray, torch.Tensor],
     device: Union[str, torch.device, None] = None,
     timer: bool = False,
+    return_intermediates: bool = True,
 ) -> dict:
     """
     Parallelized computation of reflection and transmission for incoherent and coherent
@@ -63,6 +60,9 @@ def inc_vec_tmm_disp_lstack(
     device : str, torch.device or None
         Computation device. When omitted, the device is inferred from N if N is a tensor and
         otherwise defaults to CPU.
+    return_intermediates : bool
+        Return interface matrices, coherent-substack results, propagation matrices, and angles in
+        addition to `R` and `T`. Set this to `False` when only the final powers are needed.
 
     Returns:
     --------
@@ -71,6 +71,7 @@ def inc_vec_tmm_disp_lstack(
             Reflectivity of the entire stack of incoherent and coherent layers
         "T": torch.Tensor or np.ndarray
             Transmissivity of the entire stack of incoherent and coherent layers
+        The remaining entries are included only when `return_intermediates=True`:
         "L": torch.Tensor or np.ndarray
             Interface matrices see Byrnes Eq. 28
         'coh_tmm_f': dict
@@ -128,11 +129,11 @@ def inc_vec_tmm_disp_lstack(
     )
     device = resolve_device(N, device)
     N = converter2torch(N, device)
-    D = converter2torch(D, device)
+    D = converter2torch(D, device, dtype=torch.float64)
     theta = torch.atleast_1d(converter2torch(theta, device))
-    # torch.linspace hands out float32 by default, and 1 / lambda_vacuum below would then be
-    # taken in single precision no matter how exact everything else is
-    lambda_vacuum = torch.atleast_1d(converter2torch(lambda_vacuum, device)).real
+    lambda_vacuum = torch.atleast_1d(
+        converter2torch(lambda_vacuum, device, dtype=torch.float64)
+    )
 
 
     n_lambda = len(lambda_vacuum)
@@ -148,7 +149,6 @@ def inc_vec_tmm_disp_lstack(
     coh_res_b = []
     
     L_coh_loc = np.argwhere(np.diff(imask) != 1).flatten()
-    L_inc_loc = np.argwhere(np.diff(imask) == 1).flatten()
 
     n_L_ = len(imask) -1
     # matrix of Reflectivity and Transmissivity of the layer interfaces
@@ -198,8 +198,9 @@ def inc_vec_tmm_disp_lstack(
         R_f = forward["R"]
         R_b = backward["R"]
 
-        coh_res_f.append(forward)
-        coh_res_b.append(backward)
+        if return_intermediates:
+            coh_res_f.append(forward)
+            coh_res_b.append(backward)
         # sanity_checker(T_f)
         # sanity_checker(T_b)
         # sanity_checker(R_f)
@@ -210,111 +211,103 @@ def inc_vec_tmm_disp_lstack(
         L_[:, i, :, :, 1, 0] = R_f / T_f
         L_[:, i, :, :, 1, 1] = ( T_b * T_f - R_b * R_f ) / T_f
 
-    # Now, the incoherent layers are evaluated. In principle, the treatment is identical
-    # to a coherent layer but the phase dependency is lost at each interface.
+    differences = np.diff(imask)
+    interface_positions = np.flatnonzero(differences == 1)
+    if interface_positions.size:
+        interface_layers = imask[:-1][interface_positions]
+        n_i = N[:, interface_layers]
+        n_f = N[:, interface_layers + 1]
+        cos_th_i = cos_snell_theta[:, :, interface_layers].permute(0, 2, 1, 3)
+        cos_th_f = cos_snell_theta[:, :, interface_layers + 1].permute(0, 2, 1, 3)
+        T_f, T_b, R_f, R_b = interface_powers(pol, n_i, n_f, cos_th_i, cos_th_f)
 
-    for i, (k, m) in enumerate(zip(imask[:-1], np.diff(imask))):
-        # we only evaluate interfaces between two adjacent incoherent layers 
-        if m == 1:
-            tf = interface_t_vec(
-                pol,
-                N[:, k][:, None],
-                N[:, k + 1][:, None],
-                snell_theta[:, :, k][:, :, None],
-                snell_theta[:, :, k + 1][:, :, None],
-                cos_snell_theta[:, :, k][:, :, None],
-                cos_snell_theta[:, :, k + 1][:, :, None],
-            )[:, :, :, 0]
-            T_f = T_from_t_vec(
-                pol,
-                tf,
-                N[:, k],
-                N[:, k + 1],
-                snell_theta[:, :, k],
-                snell_theta[:, :, k + 1],
-                cos_snell_theta[:, :, k],
-                cos_snell_theta[:, :, k + 1],
-            )
-            tb = interface_t_vec(
-                pol,
-                N[:, k + 1][:, None],
-                N[:, k][:, None],
-                snell_theta[:, :, k + 1][:, :, None],
-                snell_theta[:, :, k][:, :, None],
-                cos_snell_theta[:, :, k + 1][:, :, None],
-                cos_snell_theta[:, :, k][:, :, None],
-            )[:, :, :, 0]
-            T_b = T_from_t_vec(
-                pol,
-                tb,
-                N[:, k + 1],
-                N[:, k],
-                snell_theta[:, :, k + 1],
-                snell_theta[:, :, k],
-                cos_snell_theta[:, :, k + 1],
-                cos_snell_theta[:, :, k],
-            )
-            rf = interface_r_vec(
-                pol,
-                N[:, k][:, None],
-                N[:, k + 1][:, None],
-                snell_theta[:, :, k][:, :, None],
-                snell_theta[:, :, k + 1][:, :, None],
-                cos_snell_theta[:, :, k][:, :, None],
-                cos_snell_theta[:, :, k + 1][:, :, None],
-            )[:, :, :, 0]
-            R_f = R_from_r_vec(rf)
-            rb = interface_r_vec(
-                pol,
-                N[:, k + 1][:, None],
-                N[:, k][:, None],
-                snell_theta[:, :, k + 1][:, :, None],
-                snell_theta[:, :, k][:, :, None],
-                cos_snell_theta[:, :, k + 1][:, :, None],
-                cos_snell_theta[:, :, k][:, :, None],
-            )[:, :, :, 0]
-            R_b = R_from_r_vec(rb)
+        inverse_T_f = 1 / T_f
+        interface_matrices = torch.stack(
+            (
+                torch.stack((inverse_T_f, -R_b * inverse_T_f), dim=-1),
+                torch.stack(
+                    (R_f * inverse_T_f, (T_b * T_f - R_b * R_f) * inverse_T_f),
+                    dim=-1,
+                ),
+            ),
+            dim=-2,
+        )
+        L_[:, interface_positions] = interface_matrices
 
-            L_[:, i, :, :, 0, 0] = 1.0 / T_f
-            L_[:, i, :, :, 0, 1] = -R_b / T_f
-            L_[:, i, :, :, 1, 0] = R_f / T_f
-            L_[:, i, :, :, 1, 1] = ( T_b * T_f - R_b * R_f ) / T_f
     P_ = None
-    for i, k in enumerate(imask[1:-1], 1):
-        n_costheta = torch.einsum(
-            "ik,ijk->ijk", N[:, k], cos_snell_theta[:, :, k]
-        ).imag  # [n_stack, n_theta, n_lambda]
+    propagation_layers = imask[1:-1]
+    if propagation_layers.size:
+        n_costheta = (
+            N[:, propagation_layers][:, None] * cos_snell_theta[:, :, propagation_layers]
+        ).imag
         P = torch.exp(
-            -4.
+            -4
             * np.pi
-            * (torch.einsum("ijk,k,i->ijk", n_costheta, 1 / lambda_vacuum, D[:, k].real))
+            * n_costheta
+            * (1 / lambda_vacuum)[None, None, None]
+            * D[:, propagation_layers].real[:, None, :, None]
         ).clamp_min(1e-30)
-        P_ = torch.zeros((*P.shape, 2, 2), dtype=P.dtype, device=P.device) # [n_stack, n_th, n_wl, 2, 2]
-        P_[..., 0, 0] = 1/P
-        P_[..., 1, 1] = P 
-        # the clone matters: without it this reads and writes the same storage, and backward
-        # then finds the tensor it saved has been mutated
-        L_[:, i] = torch.einsum("ijklm,ijkmn->ijkln", P_, L_[:, i].clone())
+        P = P.permute(0, 2, 1, 3)
+        zeros = torch.zeros_like(P)
+        propagation_matrices = torch.stack(
+            (
+                torch.stack((1 / P, zeros), dim=-1),
+                torch.stack((zeros, P), dim=-1),
+            ),
+            dim=-2,
+        )
+        L_[:, 1:] = torch.matmul(propagation_matrices, L_[:, 1:].clone())
+        P_ = propagation_matrices[:, -1]
 
     # multiply all interfaces together
     L_tilde = L_[:, 0]
     for i in range(1, n_L_):
-        L_tilde = torch.einsum("ijklm,ijkmn->ijkln", L_tilde, L_[:, i])
+        L_tilde = torch.matmul(L_tilde, L_[:, i])
 
     R = L_tilde[..., 1, 0] / (L_tilde[..., 0, 0] + np.finfo(float).eps)
 
     T = 1 / (L_tilde[..., 0, 0] + np.finfo(float).eps)
 
-    result = {
-        "R": R,
-        "T": T,
-        "L": L_,
-        'coh_tmm_f': coh_res_f,
-        'coh_tmm_b': coh_res_b,
-        'P': P_,
-        'th_list': snell_theta,
-    }
+    result = {"R": R, "T": T}
+    if return_intermediates:
+        result.update({
+            "L": L_,
+            'coh_tmm_f': coh_res_f,
+            'coh_tmm_b': coh_res_b,
+            'P': P_,
+            'th_list': snell_theta,
+        })
     return _to_numpy(result) if return_numpy else result
+
+
+def interface_powers(pol, n_i, n_f, cos_th_i, cos_th_f):
+    n_i = n_i[:, :, None]
+    n_f = n_f[:, :, None]
+    if pol == 's':
+        incoming = n_i * cos_th_i
+        outgoing = n_f * cos_th_f
+        denominator = incoming + outgoing
+        tf = 2 * incoming / denominator
+        tb = 2 * outgoing / denominator
+        rf = (incoming - outgoing) / denominator
+        forward_flux = incoming.real
+        backward_flux = outgoing.real
+    elif pol == 'p':
+        incoming = n_i * cos_th_f
+        outgoing = n_f * cos_th_i
+        denominator = incoming + outgoing
+        tf = 2 * n_i * cos_th_i / denominator
+        tb = 2 * n_f * cos_th_f / denominator
+        rf = (outgoing - incoming) / denominator
+        forward_flux = (n_i * torch.conj(cos_th_i)).real
+        backward_flux = (n_f * torch.conj(cos_th_f)).real
+    else:
+        raise ValueError("Polarization must be 's' or 'p'")
+
+    T_f = abs(tf ** 2) * backward_flux / forward_flux
+    T_b = abs(tb ** 2) * forward_flux / backward_flux
+    R_f = abs(rf) ** 2
+    return T_f, T_b, R_f, R_f
 
 
 def sanity_checker(input):

@@ -310,5 +310,61 @@ def test_internal_coherent_substack_keeps_opacity_clamp():
     assert torch.isfinite(result['T']).all()
 
 
+def test_numpy_conversion_reuses_compatible_cpu_storage():
+    values = np.array([1.0 + 0.1j, 2.0 + 0.2j], dtype=np.complex128)
+
+    converted = coherent_module.converter2torch(values, torch.device('cpu'))
+    values[0] = 3.0 + 0.3j
+
+    assert converted[0] == torch.tensor(3.0 + 0.3j, dtype=torch.complex128)
+
+
+def test_numpy_conversion_copies_unsupported_negative_strides():
+    values = np.array([1.0, 2.0, 3.0], dtype=np.float64)[::-1]
+
+    converted = coherent_module.converter2torch(
+        values, torch.device('cpu'), dtype=torch.float64
+    )
+
+    torch.testing.assert_close(converted, torch.tensor([3.0, 2.0, 1.0], dtype=torch.float64))
+
+
+def test_real_solver_inputs_stay_float64(monkeypatch):
+    captured = []
+    original = coherent_module.check_inputs
+
+    def capture_dtypes(N, T, wavelength, theta):
+        captured.append((T.dtype, wavelength.dtype))
+        return original(N, T, wavelength, theta)
+
+    monkeypatch.setattr(coherent_module, 'check_inputs', capture_dtypes)
+    coh_tmm_fast(
+        's', [1.0, 1.8, 1.5], [np.inf, 100e-9, np.inf], 0.0, [600e-9]
+    )
+
+    assert captured == [(torch.float64, torch.float64)]
+
+
+@pytest.mark.parametrize('numpy_input', [False, True])
+def test_incoherent_compact_result_contains_only_final_powers(numpy_input):
+    wl = torch.linspace(500e-9, 700e-9, 3, dtype=torch.double)
+    theta = torch.tensor([0.0, 0.3], dtype=torch.double)
+    N = torch.tensor([1.0, 1.8 + 0.01j, 1.5], dtype=torch.complex128)[None, :, None]
+    N = N.repeat(1, 1, wl.numel())
+    D = torch.tensor([[np.inf, 2e-6, np.inf]], dtype=torch.double)
+    values = (N, D, theta, wl)
+    if numpy_input:
+        values = tuple(value.numpy() for value in values)
+
+    full = inc_tmm('s', values[0], values[1], [], values[2], values[3])
+    compact = inc_tmm(
+        's', values[0], values[1], [], values[2], values[3], return_intermediates=False
+    )
+
+    assert set(compact) == {'R', 'T'}
+    np.testing.assert_allclose(compact['R'], full['R'])
+    np.testing.assert_allclose(compact['T'], full['T'])
+
+
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-q']))
