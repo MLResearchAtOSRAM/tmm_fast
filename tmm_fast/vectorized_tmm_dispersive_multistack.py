@@ -13,7 +13,9 @@ def coh_vec_tmm_disp_mstack(pol:str,
                             Theta:Union[np.ndarray, torch.Tensor, list, tuple, float],
                             lambda_vacuum:Union[np.ndarray, torch.Tensor, list, tuple, float],
                             device:Optional[Union[str, torch.device]]=None,
-                            timer:bool=False) -> dict:
+                            timer:bool=False,
+                            *,
+                            _validate:bool=True) -> dict:
     """
     Parallelized computation of reflection and transmission for coherent light spectra that traverse
     a bunch of multilayer thin-films with dispersive materials.
@@ -128,11 +130,12 @@ def coh_vec_tmm_disp_mstack(pol:str,
     # to happen before check_inputs, which expects the full [S x L x W].
     if N.ndim == 2:
         N = N.unsqueeze(-1).repeat(1, 1, num_wavelengths)
-    check_inputs(N, T, lambda_vacuum, Theta)
+    if _validate:
+        check_inputs(N, T, lambda_vacuum, Theta)
 
     # SnellThetas is a tensor, for each stack and layer, the angle that the light travels
     # through the layer. Computed with Snell's law. Note that the "angles" may be complex!
-    SnellThetas = SnellLaw_vectorized(N, Theta)
+    SnellThetas = SnellLaw_vectorized(N, Theta, validate=_validate)
 
 
     theta = 2 * np.pi * torch.einsum('skij,sij->skij', torch.cos(SnellThetas), N)  # [theta,d, lambda]
@@ -150,10 +153,12 @@ def coh_vec_tmm_disp_mstack(pol:str,
 
     # check for opacity. If too much of the optical power is absorbed in a layer
     # it can lead to numerical instability.
-    if torch.any(delta.imag > 35.):
+    if _validate and torch.any(delta.imag > 35.):
         delta = torch.complex(delta.real, delta.imag.clamp(max=35.))
         warn('Opacity warning. The imaginary part of the phase thickness is clamped to 35 for numerical stability.\n'+
              'You might encounter problems with gradient computation...')
+    elif not _validate:
+        delta = torch.complex(delta.real, delta.imag.clamp(max=35.))
 
 
     # t_list and r_list hold the transmission and reflection coefficients from
@@ -219,7 +224,7 @@ def coh_vec_tmm_disp_mstack(pol:str,
     else:
         return {'r': r, 't': t, 'R': R, 'T': T}
 
-def SnellLaw_vectorized(n, th):
+def SnellLaw_vectorized(n, th, validate=True):
     """
     return list of angle theta in each layer based on angle th_0 in layer 0,
     using Snell's law. n_list is index of refraction of each layer. Note that
@@ -252,19 +257,19 @@ def SnellLaw_vectorized(n, th):
     # layers don't matter, see https://arxiv.org/abs/1603.02720 Section 5)
 
     angles[:, :, 0] = torch.where(
-        is_not_forward_angle(n[:, 0], angles[:, :, 0]).bool(),
+        is_not_forward_angle(n[:, 0], angles[:, :, 0], validate=validate).bool(),
         pi - angles[:, :, 0],
         angles[:, :, 0],
     )
     angles[:, :, -1] = torch.where(
-        is_not_forward_angle(n[:, -1], angles[:, :, -1]).bool(),
+        is_not_forward_angle(n[:, -1], angles[:, :, -1], validate=validate).bool(),
         pi - angles[:, :, -1],
         angles[:, :, -1],
     )
 
     return angles
 
-def is_not_forward_angle(n, theta):
+def is_not_forward_angle(n, theta, validate=True):
     """
     if a wave is traveling at angle theta from normal in a medium with index n,
     calculate whether or not this is the forward-traveling wave (i.e., the one
@@ -277,14 +282,12 @@ def is_not_forward_angle(n, theta):
     # n = [lambda]
     # theta = [theta, lambda]
 
-    error_string = ("It's not clear which beam is incoming vs outgoing. Weird index maybe?\n"
-                    "n: " + str(n) + "   angle: " + str(theta))
-
-    # Case gain material 
-    assert (n.real * n.imag >= 0).all(), ("For materials with gain, it's ambiguous which "
-                                          "beam is incoming vs outgoing. See "
-                                          "https://arxiv.org/abs/1603.02720 Appendix C.\n"
-                                          "n: " + str(n) + "   angle: " + str(theta))
+    if validate and not (n.real * n.imag >= 0).all():
+        raise AssertionError(
+            "For materials with gain, it's ambiguous which beam is incoming vs outgoing. See "
+            "https://arxiv.org/abs/1603.02720 Appendix C.\n"
+            "n: " + str(n) + "   angle: " + str(theta)
+        )
     n = n.unsqueeze(1)
     ncostheta = torch.cos(theta) * n
     assert ncostheta.shape == theta.shape, 'ncostheta and theta shape doesnt match'
@@ -298,16 +301,24 @@ def is_not_forward_angle(n, theta):
     evanescent = abs(ncostheta.imag) > 100 * EPSILON
     answer = torch.where(evanescent, ncostheta.imag > 0, ncostheta.real > 0)
 
-    # Case Im(n) < 0
-    assert (ncostheta.imag > -100 * EPSILON)[answer].all(), error_string
-
-    # Case Re(n) < 0
-    assert (ncostheta.real > -100 * EPSILON)[answer].all(), error_string
-    assert ((n * torch.cos(torch.conj(theta))).real > -100 * EPSILON)[answer].all(), error_string
-
-    assert (ncostheta.imag < 100 * EPSILON)[~answer].all(), error_string
-    assert (ncostheta.real < 100 * EPSILON)[~answer].all(), error_string
-    assert ((n * torch.cos(torch.conj(theta))).real < 100 * EPSILON)[~answer].all(), error_string
+    if validate:
+        tolerance = 100 * EPSILON
+        conjugate_ncostheta = (n * torch.cos(torch.conj(theta))).real
+        valid_forward = ~answer | (
+            (ncostheta.imag > -tolerance)
+            & (ncostheta.real > -tolerance)
+            & (conjugate_ncostheta > -tolerance)
+        )
+        valid_backward = answer | (
+            (ncostheta.imag < tolerance)
+            & (ncostheta.real < tolerance)
+            & (conjugate_ncostheta < tolerance)
+        )
+        if not (valid_forward & valid_backward).all():
+            raise AssertionError(
+                "It's not clear which beam is incoming vs outgoing. Weird index maybe?\n"
+                "n: " + str(n.squeeze(1)) + "   angle: " + str(theta)
+            )
     answer = (~answer).clone().detach().type(torch.float)
 
     # for cross checking of the answer

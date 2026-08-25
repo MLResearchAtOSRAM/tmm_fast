@@ -7,6 +7,8 @@ import torch
 from tmm import coh_tmm
 
 from tmm_fast import coh_tmm as coh_tmm_fast, inc_tmm
+import tmm_fast.vectorized_incoherent_tmm as incoherent_module
+import tmm_fast.vectorized_tmm_dispersive_multistack as coherent_module
 
 POLARIZATIONS = ['s', 'p']
 
@@ -218,6 +220,71 @@ def test_device_is_inferred_from_refractive_indices():
     N = torch.tensor([1.0, 1.8, 1.5], dtype=torch.complex128, device=device)
     result = coh_tmm_fast('s', N, [np.inf, 100e-9, np.inf], 0.0, 600e-9)
     assert result['R'].device == device
+
+
+def test_forward_angle_diagnostics_are_formatted_only_on_failure(monkeypatch):
+    def unexpected_formatting(value):
+        raise AssertionError(f'formatted a valid {type(value).__name__}')
+
+    monkeypatch.setattr(coherent_module, 'str', unexpected_formatting, raising=False)
+    n = torch.ones((1, 1), dtype=torch.complex128)
+    theta = torch.zeros((1, 1, 1), dtype=torch.complex128)
+
+    result = coherent_module.is_not_forward_angle(n, theta)
+
+    assert not result.any()
+
+
+def test_invalid_forward_angle_keeps_detailed_diagnostics():
+    n = torch.tensor([[-1 + 1j]], dtype=torch.complex128)
+    theta = torch.zeros((1, 1, 1), dtype=torch.complex128)
+
+    with pytest.raises(AssertionError, match='n:.*angle:',):
+        coherent_module.is_not_forward_angle(n, theta)
+
+
+def test_mixed_solver_validates_once_before_coherent_substacks(monkeypatch):
+    validations = []
+    original = coherent_module.check_inputs
+
+    def record_validation(*args):
+        validations.append(None)
+        return original(*args)
+
+    monkeypatch.setattr(coherent_module, 'check_inputs', record_validation)
+    monkeypatch.setattr(incoherent_module, 'check_inputs', record_validation)
+    wl = torch.linspace(500e-9, 700e-9, 3, dtype=torch.double)
+    theta = torch.tensor([0.0, 0.3], dtype=torch.double)
+    N = torch.tensor([1.0, 1.8 + 0.01j, 1.5], dtype=torch.complex128)[None, :, None]
+    N = N.repeat(1, 1, wl.numel())
+    D = torch.tensor([[np.inf, 120e-9, np.inf]], dtype=torch.double)
+
+    result = inc_tmm('s', N, D, [[1]], theta, wl)
+
+    assert len(validations) == 1
+    assert torch.isfinite(result['R']).all()
+
+
+def test_incoherent_public_entry_point_validates_injection_medium():
+    wl = torch.tensor([600e-9], dtype=torch.double)
+    theta = torch.tensor([0.2], dtype=torch.double)
+    N = torch.tensor([1.0 + 0.1j, 1.5, 1.0], dtype=torch.complex128)[None, :, None]
+    D = torch.tensor([[np.inf, 2e-6, np.inf]], dtype=torch.double)
+
+    with pytest.raises(AssertionError, match='Non well-defined refractive indicies'):
+        inc_tmm('s', N, D, [], theta, wl)
+
+
+def test_internal_coherent_substack_keeps_opacity_clamp():
+    wl = torch.tensor([600e-9], dtype=torch.double)
+    theta = torch.tensor([0.0], dtype=torch.double)
+    N = torch.tensor([1.0, 1.5 + 1000j, 1.5], dtype=torch.complex128)[None, :, None]
+    D = torch.tensor([[np.inf, 100e-9, np.inf]], dtype=torch.double)
+
+    result = inc_tmm('s', N, D, [[1]], theta, wl)
+
+    assert torch.isfinite(result['R']).all()
+    assert torch.isfinite(result['T']).all()
 
 
 if __name__ == '__main__':

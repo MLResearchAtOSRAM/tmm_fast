@@ -10,6 +10,7 @@ from .vectorized_tmm_dispersive_multistack import (
     converter2torch,
     converter2numpy,
     resolve_device,
+    check_inputs,
 )
 
 from typing import Union
@@ -140,6 +141,7 @@ def inc_vec_tmm_disp_lstack(
     n_stack = D.shape[0]
     if N.ndim == 2:
         N = N.unsqueeze(-1).repeat(1, 1, n_lambda)
+    check_inputs(N, D, lambda_vacuum, theta)
     imask = get_imask(mask, n_layers)
 
     coh_res_f = []
@@ -172,7 +174,8 @@ def inc_vec_tmm_disp_lstack(
         d = D[:, m_]
         d[:, 0] = d[:, -1] = np.inf
         forward = coh_tmm(
-            pol, N_, d, snell_theta[:, :, m_[0], :], lambda_vacuum, device
+            pol, N_, d, snell_theta[:, :, m_[0], :], lambda_vacuum, device,
+            _validate=False,
         )
         # the substack must be evaluated in both directions since we can have an incoming wave from the output side
         # (a reflection from an incoherent layer) and Reflectivit/Transmissivity can be different depending on the direction
@@ -183,6 +186,7 @@ def inc_vec_tmm_disp_lstack(
             snell_theta[:, :, m_[-1], :],
             lambda_vacuum,
             device,
+            _validate=False,
         )
         T_f = forward["T"]  # [n_stack, n_lambda, n_theta]
         T_b = backward["T"]
