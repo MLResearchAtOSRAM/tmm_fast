@@ -243,6 +243,52 @@ def test_invalid_forward_angle_keeps_detailed_diagnostics():
         coherent_module.is_not_forward_angle(n, theta)
 
 
+@pytest.mark.parametrize(
+    'indices',
+    [
+        pytest.param([1.0, 1.8 + 0.2j, 1.5], id='absorbing-layer'),
+        pytest.param([1.5, 1.0, 1.2], id='total-internal-reflection'),
+        pytest.param([1.5, -1.0, 1.2], id='negative-index-branch-cut'),
+        pytest.param([1.0, 1.5 + 100j, 1.4], id='high-extinction'),
+    ],
+)
+def test_direct_snell_cosines_match_angle_construction(indices):
+    wavelengths = 3
+    n = torch.tensor(indices, dtype=torch.complex128)[None, :, None]
+    n = n.repeat(1, 1, wavelengths)
+    theta = torch.deg2rad(torch.tensor([0.0, 45.0, 75.0], dtype=torch.float64))
+    theta = theta.to(torch.complex128)
+
+    angles = coherent_module.SnellLaw_vectorized(n, theta)
+    direct = coherent_module.SnellLaw_cosines_vectorized(n, theta)
+
+    torch.testing.assert_close(direct, torch.cos(angles), rtol=1e-14, atol=1e-14)
+
+
+def test_snell_angles_are_constructed_only_for_requested_intermediates(monkeypatch):
+    calls = []
+    original = torch.asin
+
+    def record_asin(value):
+        calls.append(None)
+        return original(value)
+
+    monkeypatch.setattr(torch, 'asin', record_asin)
+    wl = torch.linspace(500e-9, 700e-9, 3, dtype=torch.double)
+    theta = torch.tensor([0.0, 0.3], dtype=torch.double)
+    N = torch.tensor([1.0, 1.8 + 0.01j, 1.5], dtype=torch.complex128)[None, :, None]
+    N = N.repeat(1, 1, wl.numel())
+    D = torch.tensor([[np.inf, 120e-9, np.inf]], dtype=torch.double)
+
+    coh_tmm_fast('s', N, D, theta, wl)
+    inc_tmm('s', N, D, [[1]], theta, wl, return_intermediates=False)
+    assert calls == []
+
+    result = inc_tmm('s', N, D, [[1]], theta, wl)
+    assert calls == [None]
+    assert result['th_list'].shape == (1, 2, 3, 3)
+
+
 def test_mixed_solver_validates_once_before_coherent_substacks(monkeypatch):
     validations = []
     original = coherent_module.check_inputs

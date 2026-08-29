@@ -150,7 +150,10 @@ def solver_call(scenario, backend, device, inputs):
     if scenario.solver == 'coherent':
         return lambda: coh_tmm('s', N, D, angles, wavelengths, device=device_argument)
     mask = [list(group) for group in scenario.mask]
-    return lambda: inc_tmm('s', N, D, mask, angles, wavelengths, device=device_argument)
+    return lambda: inc_tmm(
+        's', N, D, mask, angles, wavelengths, device=device_argument,
+        return_intermediates=False,
+    )
 
 
 def synchronize(device):

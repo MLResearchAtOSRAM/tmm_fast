@@ -137,18 +137,24 @@ def coh_vec_tmm_disp_mstack(pol:str,
     if _validate:
         check_inputs(N, T, lambda_vacuum, Theta)
 
-    # SnellThetas is a tensor, for each stack and layer, the angle that the light travels
-    # through the layer. Computed with Snell's law. Note that the "angles" may be complex!
-    if _snell_thetas is None:
-        SnellThetas = SnellLaw_vectorized(N, Theta, validate=_validate)
-        cos_SnellThetas = torch.cos(SnellThetas)
+    # The numerical core uses cos(theta) everywhere: in kz, the Fresnel coefficients, and
+    # transmitted power. It therefore does not need to construct theta with asin. The private
+    # angle argument remains as a compatibility fallback for older internal callers.
+    snell_shape = (num_stacks, num_angles, num_layers, num_wavelengths)
+    if _snell_thetas is not None:
+        assert _snell_thetas.shape == snell_shape
+    if _snell_cosines is None:
+        if _snell_thetas is None:
+            cos_SnellThetas = SnellLaw_cosines_vectorized(N, Theta, validate=_validate)
+        else:
+            cos_SnellThetas = select_forward_cosines(
+                N, torch.cos(_snell_thetas), validate=_validate
+            )
     else:
-        assert _snell_thetas.shape == (num_stacks, num_angles, num_layers, num_wavelengths)
-        SnellThetas, cos_SnellThetas = select_forward_angles(
-            N, _snell_thetas, _snell_cosines, validate=_validate
+        assert _snell_cosines.shape == snell_shape
+        cos_SnellThetas = select_forward_cosines(
+            N, _snell_cosines, validate=_validate
         )
-        if cos_SnellThetas is None:
-            cos_SnellThetas = torch.cos(SnellThetas)
 
 
     theta = 2 * np.pi * torch.einsum('skij,sij->skij', cos_SnellThetas, N)  # [theta,d, lambda]
@@ -178,13 +184,13 @@ def coh_vec_tmm_disp_mstack(pol:str,
     # the Fresnel Equations
 
     t_list = interface_t_vec(
-        pol, N[:, :-1, :], N[:, 1:, :], SnellThetas[:, :, :-1, :],
-        SnellThetas[:, :, 1:, :], cos_SnellThetas[:, :, :-1, :],
+        pol, N[:, :-1, :], N[:, 1:, :], None,
+        None, cos_SnellThetas[:, :, :-1, :],
         cos_SnellThetas[:, :, 1:, :]
     )
     r_list = interface_r_vec(
-        pol, N[:, :-1, :], N[:, 1:, :], SnellThetas[:, :, :-1, :],
-        SnellThetas[:, :, 1:, :], cos_SnellThetas[:, :, :-1, :],
+        pol, N[:, :-1, :], N[:, 1:, :], None,
+        None, cos_SnellThetas[:, :, :-1, :],
         cos_SnellThetas[:, :, 1:, :]
     )
     
@@ -227,7 +233,7 @@ def coh_vec_tmm_disp_mstack(pol:str,
     # power.
     R = R_from_r_vec(r)
     T = T_from_t_vec(
-        pol, t, N[:, 0], N[:, -1], SnellThetas[:, :, 0], SnellThetas[:, :, -1],
+        pol, t, N[:, 0], N[:, -1], None, None,
         cos_SnellThetas[:, :, 0], cos_SnellThetas[:, :, -1]
     )
 
@@ -249,14 +255,39 @@ def coh_vec_tmm_disp_mstack(pol:str,
     else:
         return {'r': r, 't': t, 'R': R, 'T': T}
 
-def SnellLaw_vectorized(n, th, validate=True):
+def _snell_sines(n, th):
+    """Apply Snell's law and return ``sin(theta)`` in every layer.
+
+    Snell's law states ``n_0 sin(theta_0) = n_j sin(theta_j)``. The left-hand side is
+    fixed by the injection medium, so division by each layer index produces the complete
+    ``[stack, angle, layer, wavelength]`` grid without calculating any angles.
+
+    ``th`` is normally the one-dimensional incident-angle grid. The three-dimensional form
+    ``[stack, angle, wavelength]`` is retained for an embedded substack whose injection angle
+    is dispersive.
     """
-    return list of angle theta in each layer based on angle th_0 in layer 0,
-    using Snell's law. n_list is index of refraction of each layer. Note that
-    "angles" may be complex!!
+    if th.ndim == 1:
+        return torch.einsum('hk,j,hik->hjik', n[:, 0], torch.sin(th), 1 / n)
+    if th.ndim == 3:
+        return n[:, 0, None, None, :] * torch.sin(th[:, :, None, :]) / n[:, None]
+    raise AssertionError(
+        'Theta is not of shape [A] (1d) or [S x A x W] (3d), as it is of shape '
+        + str(tuple(th.shape))
+    )
+
+
+def _snell_quantities(n, th, validate, return_angles):
+    """Build the Snell quantities needed by either the solver or its diagnostic output.
+
+    The solver needs only ``cos(theta_j)``. Once :func:`_snell_sines` has provided
+    ``sin(theta_j)``, the identity ``cos(theta_j)**2 = 1 - sin(theta_j)**2`` gives the
+    cosine through one complex square root. This avoids constructing ``theta_j`` with
+    ``asin`` and immediately evaluating ``cos(theta_j)`` again.
+
+    Angles are still constructed when ``return_angles`` is true because the full incoherent
+    result exposes them as ``th_list``. Both paths return a tuple ``(angles, cosines)``;
+    ``angles`` is ``None`` on the response-only path.
     """
-    # Important that the arcsin here is numpy.lib.scimath.arcsin, not
-    # numpy.arcsin! (They give different results e.g. for arcsin(2).)
     if th.dtype != torch.complex128:
         warn('there is some problem with theta, the dtype is not complex')
     if n.dtype != torch.complex128:
@@ -264,27 +295,53 @@ def SnellLaw_vectorized(n, th, validate=True):
     th = th if th.dtype == torch.complex128 else th.type(torch.complex128)
     n = n if n.dtype == torch.complex128 else n.type(torch.complex128)
 
-    if th.ndim == 1:
-        n0_ = torch.einsum('hk,j,hik->hjik', n[:,0], torch.sin(th), 1/n)
-    elif th.ndim == 3:
-        # A substack embedded in a dispersive multilayer has a different incident angle for
-        # every stack and wavelength. Preserve that [S x A x W] grid instead of silently
-        # reusing stack 0 / wavelength 0.
-        n0_ = n[:, 0, None, None, :] * torch.sin(th[:, :, None, :]) / n[:, None, :, :]
-    else:
-        raise AssertionError(
-            'Theta is not of shape [A] (1d) or [S x A x W] (3d), as it is of shape '
-            + str(tuple(th.shape))
-        )
-    angles = torch.asin(n0_)
-    
-    # The first and last entry need to be the forward angle (the intermediate
-    # layers don't matter, see https://arxiv.org/abs/1603.02720 Section 5)
+    sines = _snell_sines(n, th)
+    cosine_squared = 1 - sines * sines
+    # Beyond a critical angle, cosine_squared is a negative real number. Its complex square
+    # root can be +ij or -ij, and PyTorch selects between them from the sign of the zero
+    # imaginary component. Reconstruct the same signed zero as cos(asin(sines)) so that the
+    # direct path preserves the established evanescent-wave branch, including negative indices.
+    zero = torch.zeros_like(cosine_squared.imag)
+    negative_cut = torch.signbit(sines.real) == torch.signbit(sines.imag)
+    cosine_squared = torch.complex(
+        cosine_squared.real,
+        torch.where(
+            (cosine_squared.imag == 0) & (cosine_squared.real < 0),
+            torch.where(negative_cut, -zero, zero),
+            cosine_squared.imag,
+        ),
+    )
+    cosines = torch.sqrt(cosine_squared)
+    if not return_angles:
+        return None, select_forward_cosines(n, cosines, validate=validate)
 
-    angles, _ = select_forward_angles(n, angles, validate=validate)
-    return angles
+    angles = torch.asin(sines)
+    return select_forward_angles(n, angles, cosines, validate=validate)
+
+
+def SnellLaw_vectorized(n, th, validate=True, return_cosines=False):
+    """
+    return list of angle theta in each layer based on angle th_0 in layer 0,
+    using Snell's law. n_list is index of refraction of each layer. Note that
+    "angles" may be complex!!
+    """
+    angles, cosines = _snell_quantities(n, th, validate, return_angles=True)
+    return (angles, cosines) if return_cosines else angles
+
+
+def SnellLaw_cosines_vectorized(n, th, validate=True):
+    """Return the Snell cosine grid without paying for an intermediate angle grid."""
+    _, cosines = _snell_quantities(n, th, validate, return_angles=False)
+    return cosines
 
 def select_forward_angles(n, angles, cosines=None, validate=True):
+    """Select the physically forward branches at the two semi-infinite boundaries.
+
+    The transfer product is invariant to the branch selected in a finite interior layer, but
+    the injection and exit media must describe waves travelling away from their respective
+    boundaries. When cosines are already available, update them with the angle branch so both
+    representations remain consistent.
+    """
     angles = angles.clone()
     cosines = None if cosines is None else cosines.clone()
     for layer in (0, -1):
@@ -302,29 +359,50 @@ def select_forward_angles(n, angles, cosines=None, validate=True):
     return angles, cosines
 
 
+def select_forward_cosines(n, cosines, validate=True):
+    """Cosine-only counterpart of :func:`select_forward_angles`.
+
+    Reversing a coherent substack can make a previously forward boundary cosine point
+    backwards. Checking the first and last layer here lets parent Snell cosines be reused for
+    forward and backward substack calculations without recreating angles.
+    """
+    cosines = cosines.clone()
+    for layer in (0, -1):
+        backward = is_not_forward_angle(
+            n[:, layer], None, cosines[:, :, layer], validate=validate
+        ).bool()
+        cosines[:, :, layer] = torch.where(
+            backward, -cosines[:, :, layer], cosines[:, :, layer]
+        )
+    return cosines
+
+
 def is_not_forward_angle(n, theta, cos_theta=None, validate=True):
     """
-    if a wave is traveling at angle theta from normal in a medium with index n,
-    calculate whether or not this is the forward-traveling wave (i.e., the one
-    going from front to back of the stack, like the incoming or outgoing waves,
-    but unlike the reflected wave). For real n & theta, the criterion is simply
-    -pi/2 < theta < pi/2, but for complex n & theta, it's more complicated.
-    See https://arxiv.org/abs/1603.02720 appendix D. If theta is the forward
-    angle, then (pi-theta) is the backward angle and vice-versa.
+    Return whether a propagation branch points backwards.
+
+    The decision depends on ``n cos(theta)``, not on the angle itself. Callers may therefore
+    pass ``theta=None`` with a precomputed ``cos_theta`` on the fast path. For evanescent or
+    lossy waves the forward branch decays along +z; for propagating waves it has a positive
+    Poynting vector. See Byrnes, arXiv:1603.02720, appendix D.
     """
     # n = [lambda]
     # theta = [theta, lambda]
 
+    diagnostic_angle = theta
     if validate and not (n.real * n.imag >= 0).all():
+        if diagnostic_angle is None:
+            diagnostic_angle = torch.acos(cos_theta)
         raise AssertionError(
             "For materials with gain, it's ambiguous which beam is incoming vs outgoing. See "
             "https://arxiv.org/abs/1603.02720 Appendix C.\n"
-            "n: " + str(n) + "   angle: " + str(theta)
+            "n: " + str(n) + "   angle: " + str(diagnostic_angle)
         )
     n = n.unsqueeze(1)
     cos_theta = torch.cos(theta) if cos_theta is None else cos_theta
     ncostheta = cos_theta * n
-    assert ncostheta.shape == theta.shape, 'ncostheta and theta shape doesnt match'
+    expected_shape = theta.shape if theta is not None else cos_theta.shape
+    assert ncostheta.shape == expected_shape, 'ncostheta and theta shape doesnt match'
     # For evanescent decay or a lossy medium the decaying wave is the forward-moving one,
     # everywhere else it is the one with a positive Poynting vector. The Poynting vector is
     # Re[n cos(theta)] for s-polarization and Re[n cos(theta*)] for p-polarization, but the
@@ -349,9 +427,11 @@ def is_not_forward_angle(n, theta, cos_theta=None, validate=True):
             & (conjugate_ncostheta < tolerance)
         )
         if not (valid_forward & valid_backward).all():
+            if diagnostic_angle is None:
+                diagnostic_angle = torch.acos(cos_theta)
             raise AssertionError(
                 "It's not clear which beam is incoming vs outgoing. Weird index maybe?\n"
-                "n: " + str(n.squeeze(1)) + "   angle: " + str(theta)
+                "n: " + str(n.squeeze(1)) + "   angle: " + str(diagnostic_angle)
             )
     answer = (~answer).clone().detach().type(torch.float)
 

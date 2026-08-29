@@ -3,6 +3,7 @@ import numpy as np
 from .vectorized_tmm_dispersive_multistack import coh_vec_tmm_disp_mstack as coh_tmm
 from .vectorized_tmm_dispersive_multistack import (
     SnellLaw_vectorized,
+    SnellLaw_cosines_vectorized,
     converter2torch,
     converter2numpy,
     resolve_device,
@@ -161,10 +162,18 @@ def inc_vec_tmm_disp_lstack(
         device=N.device,
     )
 
-    snell_theta = SnellLaw_vectorized(
-        N.type(torch.complex128), theta.type(torch.complex128)
-    )  # propagation angle in every layer
-    cos_snell_theta = torch.cos(snell_theta)
+    complex_N = N.type(torch.complex128)
+    complex_theta = theta.type(torch.complex128)
+    # th_list is an optional diagnostic. A compact R/T result can stay on the cosine-only
+    # path, while the full result constructs angles once and shares the accompanying cosines
+    # with every coherent substack.
+    if return_intermediates:
+        snell_theta, cos_snell_theta = SnellLaw_vectorized(
+            complex_N, complex_theta, return_cosines=True
+        )
+    else:
+        snell_theta = None
+        cos_snell_theta = SnellLaw_cosines_vectorized(complex_N, complex_theta)
 
     # first, the coherent substacks are evaluated with the adjacent incoherent stacks as input 
     # and output layer. Therefore, Im(N) of the incoherent layers are set to zero for the 
@@ -175,9 +184,8 @@ def inc_vec_tmm_disp_lstack(
         d = D[:, m_]
         d[:, 0] = d[:, -1] = np.inf
         forward = coh_tmm(
-            pol, N_, d, snell_theta[:, :, m_[0], :], lambda_vacuum, device,
+            pol, N_, d, theta, lambda_vacuum, device,
             _validate=False,
-            _snell_thetas=snell_theta[:, :, m_, :],
             _snell_cosines=cos_snell_theta[:, :, m_, :],
         )
         # the substack must be evaluated in both directions since we can have an incoming wave from the output side
@@ -186,11 +194,10 @@ def inc_vec_tmm_disp_lstack(
             pol,
             N_.flip([1]),
             d.flip([1]),
-            snell_theta[:, :, m_[-1], :],
+            theta,
             lambda_vacuum,
             device,
             _validate=False,
-            _snell_thetas=snell_theta[:, :, m_, :].flip([2]),
             _snell_cosines=cos_snell_theta[:, :, m_, :].flip([2]),
         )
         T_f = forward["T"]  # [n_stack, n_lambda, n_theta]
