@@ -95,6 +95,72 @@ def test_absorbing_coherent_stack(pol):
 
 
 @pytest.mark.parametrize('pol', POLARIZATIONS)
+@pytest.mark.parametrize(
+    'num_inner_layers',
+    [
+        pytest.param(0, id='no-interior-layer'),
+        pytest.param(1, id='initial-layer-only'),
+        pytest.param(2, id='first-recurrence-step'),
+        pytest.param(18, id='deep-product'),
+    ],
+)
+def test_coherent_recurrence_layer_count_edges_match_reference(
+        pol, num_inner_layers):
+    wl = torch.tensor([500e-9, 600e-9, 700e-9], dtype=torch.double)
+    theta = torch.tensor([0.0, 0.7], dtype=torch.double)
+    indices = [1.0] + [1.4 + 0.05 * (layer % 5) + 0.001j
+                       for layer in range(num_inner_layers)] + [1.52]
+    M = torch.tensor(indices, dtype=torch.complex128)[None, :, None]
+    M = M.repeat(1, 1, wl.numel())
+    if num_inner_layers:
+        inner = torch.linspace(
+            50e-9, 200e-9, num_inner_layers, dtype=torch.double)
+    else:
+        inner = torch.empty(0, dtype=torch.double)
+    T = torch.cat((torch.tensor([np.inf]), inner, torch.tensor([np.inf])))[None]
+
+    check_against_reference(pol, M, T, theta, wl)
+
+
+@pytest.mark.parametrize(
+    ('solver', 'args'),
+    [
+        pytest.param(
+            coh_tmm_fast,
+            ('s', [1.0], [np.inf], 0.0, 600e-9),
+            id='coherent',
+        ),
+        pytest.param(
+            inc_tmm,
+            ('s', [[1.0]], [[np.inf]], [], 0.0, 600e-9),
+            id='incoherent',
+        ),
+    ],
+)
+def test_stack_requires_injection_and_exit_media(solver, args):
+    with pytest.raises(AssertionError, match='injection and an exit medium'):
+        solver(*args)
+
+
+def test_coherent_product_does_not_materialize_2x2_matrices(monkeypatch):
+    def unexpected_matrix_operation(*args, **kwargs):
+        raise AssertionError('coherent product materialized a 2x2 matrix')
+
+    monkeypatch.setattr(torch, 'stack', unexpected_matrix_operation)
+    monkeypatch.setattr(torch, 'matmul', unexpected_matrix_operation)
+    wl = torch.tensor([550e-9, 650e-9], dtype=torch.double)
+    theta = torch.tensor([0.0, 0.4], dtype=torch.double)
+    M = torch.tensor([1.0, 1.45, 2.1 + 0.01j, 1.5], dtype=torch.complex128)
+    M = M[None, :, None].repeat(1, 1, wl.numel())
+    T = torch.tensor([[np.inf, 100e-9, 140e-9, np.inf]], dtype=torch.double)
+
+    result = coh_tmm_fast('s', M, T, theta, wl)
+
+    assert torch.isfinite(result['R']).all()
+    assert torch.isfinite(result['T']).all()
+
+
+@pytest.mark.parametrize('pol', POLARIZATIONS)
 def test_thin_high_extinction_layer_matches_reference(pol):
     wl = torch.tensor([600e-9], dtype=torch.double)
     theta = torch.tensor([0.0], dtype=torch.double)

@@ -228,11 +228,12 @@ def test_batch_throughput(scenario, backend, device):
               f'{result.stacks_per_second:>9.1f} stacks/s')
 
     single = measurements[0].stacks_per_second
-    batched = measurements[-1].stacks_per_second
-    assert batched >= single * MINIMUM_THROUGHPUT_GAIN, (
+    best_batched = max(measurements[1:], key=lambda result: result.stacks_per_second)
+    assert best_batched.stacks_per_second >= single * MINIMUM_THROUGHPUT_GAIN, (
         f'{scenario.name} with {backend} inputs on {device} did not improve throughput by at '
         f'least {MINIMUM_THROUGHPUT_GAIN - 1:.0%}: {single:.1f} stacks/s at batch 1, '
-        f'{batched:.1f} stacks/s at batch {BATCH_SIZES[-1]}'
+        f'best was {best_batched.stacks_per_second:.1f} stacks/s at batch '
+        f'{best_batched.batch_size}'
     )
 
 

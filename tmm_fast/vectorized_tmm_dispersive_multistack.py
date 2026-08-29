@@ -199,35 +199,35 @@ def coh_vec_tmm_disp_mstack(pol:str,
     A = torch.exp(1j * delta).permute(0, 2, 1, 3)
     F = r_list[:, :, :, 1:]
 
-    batch_shape = (num_stacks, num_angles, num_wavelengths)
-    Mtilde = torch.eye(2, dtype=torch.complex128, device=device).expand(*batch_shape, 2, 2)
-    for i in range(num_layers - 2):
-        inverse_A = 1 / (A[..., i] + np.finfo(float).eps)
-        inverse_t = 1 / t_list[..., i + 1]
-        F_over_t = F[..., i] * inverse_t
-        layer_matrix = torch.stack(
-            (
-                torch.stack((inverse_A * inverse_t, inverse_A * F_over_t), dim=-1),
-                torch.stack((A[..., i] * F_over_t, A[..., i] * inverse_t), dim=-1),
-            ),
-            dim=-2,
-        )
-        Mtilde = torch.matmul(Mtilde, layer_matrix)
-
     inverse_t0 = 1 / t_list[..., 0]
     reflected_t0 = r_list[..., 0] * inverse_t0
-    M_r0 = torch.stack(
-        (
-            torch.stack((inverse_t0, reflected_t0), dim=-1),
-            torch.stack((reflected_t0, inverse_t0), dim=-1),
-        ),
-        dim=-2,
-    )
-    Mtilde = torch.matmul(M_r0, Mtilde)
+
+    if num_layers > 2:
+        m00, m01, m10, m11 = _coherent_layer_components(
+            A[..., 0], F[..., 0], t_list[..., 1]
+        )
+        for i in range(1, num_layers - 2):
+            l00, l01, l10, l11 = _coherent_layer_components(
+                A[..., i], F[..., i], t_list[..., i + 1]
+            )
+            m00, m01, m10, m11 = (
+                m00 * l00 + m01 * l10,
+                m00 * l01 + m01 * l11,
+                m10 * l00 + m11 * l10,
+                m10 * l01 + m11 * l11,
+            )
+
+        transfer00, transfer10 = (
+            inverse_t0 * m00 + reflected_t0 * m10,
+            reflected_t0 * m00 + inverse_t0 * m10,
+        )
+    else:
+        transfer00 = inverse_t0
+        transfer10 = reflected_t0
 
     # Net complex transmission and reflection amplitudes
-    r = Mtilde[:, :, :, 1, 0] / (Mtilde[:, :, :, 0, 0] + np.finfo(float).eps)
-    t = 1 / (Mtilde[:, :, :, 0, 0] + np.finfo(float).eps)
+    r = transfer10 / (transfer00 + np.finfo(float).eps)
+    t = 1 / (transfer00 + np.finfo(float).eps)
 
     # Net transmitted and reflected power, as a proportion of the incoming light
     # power.
@@ -254,6 +254,24 @@ def coh_vec_tmm_disp_mstack(pol:str,
         return {'r': r, 't': t, 'R': R, 'T': T}, [push_time, total_time]
     else:
         return {'r': r, 't': t, 'R': R, 'T': T}
+
+
+def _coherent_layer_components(propagation, reflection, transmission):
+    """Return one coherent layer's four transfer-matrix entries without stacking them.
+
+    Keeping the entries as separate ``[stack, angle, wavelength]`` tensors avoids allocating
+    a trailing 2x2 dimension for every layer. The caller can then apply the fixed 2x2 product
+    explicitly, which is cheaper than constructing a matrix only to pass it to ``matmul``.
+    """
+    inverse_propagation = 1 / (propagation + np.finfo(float).eps)
+    inverse_transmission = 1 / transmission
+    reflected_transmission = reflection * inverse_transmission
+    return (
+        inverse_propagation * inverse_transmission,
+        inverse_propagation * reflected_transmission,
+        propagation * reflected_transmission,
+        propagation * inverse_transmission,
+    )
 
 def _snell_sines(n, th):
     """Apply Snell's law and return ``sin(theta)`` in every layer.
@@ -348,7 +366,7 @@ def select_forward_angles(n, angles, cosines=None, validate=True):
         layer_cosines = None if cosines is None else cosines[:, :, layer]
         backward = is_not_forward_angle(
             n[:, layer], angles[:, :, layer], layer_cosines, validate=validate
-        ).bool()
+        )
         angles[:, :, layer] = torch.where(
             backward, pi - angles[:, :, layer], angles[:, :, layer]
         )
@@ -370,7 +388,7 @@ def select_forward_cosines(n, cosines, validate=True):
     for layer in (0, -1):
         backward = is_not_forward_angle(
             n[:, layer], None, cosines[:, :, layer], validate=validate
-        ).bool()
+        )
         cosines[:, :, layer] = torch.where(
             backward, -cosines[:, :, layer], cosines[:, :, layer]
         )
@@ -433,7 +451,7 @@ def is_not_forward_angle(n, theta, cos_theta=None, validate=True):
                 "It's not clear which beam is incoming vs outgoing. Weird index maybe?\n"
                 "n: " + str(n.squeeze(1)) + "   angle: " + str(diagnostic_angle)
             )
-    answer = (~answer).clone().detach().type(torch.float)
+    answer = ~answer
 
     # for cross checking of the answer
     # answer_tmm = torch.empty_like(answer, dtype=torch.bool)
@@ -609,6 +627,8 @@ def check_inputs(N, T, lambda_vacuum, theta):
     \nfound N.shape=' + str(N.shape) + ' and T.shape=' + str(T.shape) + ' instead!'
     assert T.shape[1] == N.shape[1], 'The number of thin-film layers (second dimension) of N and T must coincide, \
     \nfound N.shape=' + str(N.shape) + ' and T.shape=' + str(T.shape) + ' instead!'
+    assert N.shape[1] >= 2, ('A stack must contain at least an injection and an '
+                             'exit medium')
     # check the dimensionality of Theta. The full grid is used internally for coherent
     # substacks whose injection medium is dispersive.
     assert theta.ndim in (1, 3), (
