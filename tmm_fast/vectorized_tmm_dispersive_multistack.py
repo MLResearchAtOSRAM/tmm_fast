@@ -542,7 +542,13 @@ def R_from_r_vec(r):
     """
     Calculate reflected power R, starting with reflection amplitude r.
     """
-    return abs(r) ** 2
+    return _complex_abs_squared(r)
+
+
+def _complex_abs_squared(value: torch.Tensor) -> torch.Tensor:
+    """Return ``|value|²`` without forming a magnitude or taking a square root."""
+    return value.real.square() + value.imag.square()
+
 
 def T_from_t_vec(pol, t, n_i, n_f, th_i, th_f, cos_th_i=None, cos_th_f=None):
     """
@@ -568,12 +574,12 @@ def T_from_t_vec(pol, t, n_i, n_f, th_i, th_f, cos_th_i=None, cos_th_f=None):
     if pol == 's':
         ni_thi = torch.real(cos_th_i * n_i.unsqueeze(1))
         nf_thf = torch.real(cos_th_f * n_f.unsqueeze(1))
-        return (abs(t ** 2) * ((nf_thf) / (ni_thi)))
+        return _complex_abs_squared(t) * nf_thf / ni_thi
 
     elif pol == 'p':
         ni_thi = torch.real(torch.conj(cos_th_i) * n_i.unsqueeze(1))
         nf_thf = torch.real(torch.conj(cos_th_f) * n_f.unsqueeze(1))
-        return (abs(t ** 2) * ((nf_thf) / (ni_thi)))
+        return _complex_abs_squared(t) * nf_thf / ni_thi
 
     else:
         raise ValueError("Polarization must be 's' or 'p'")

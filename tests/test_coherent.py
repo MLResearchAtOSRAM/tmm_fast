@@ -13,6 +13,23 @@ import tmm_fast.vectorized_tmm_dispersive_multistack as coherent_module
 POLARIZATIONS = ['s', 'p']
 
 
+@pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
+def test_complex_abs_squared_handles_edge_values_and_gradients(dtype):
+    values = torch.tensor(
+        [0, 2, 3j, -4 + 5j, 1e-12 - 1e-12j],
+        dtype=dtype,
+        requires_grad=True,
+    )
+
+    result = coherent_module._complex_abs_squared(values)
+    expected = torch.abs(values).square()
+
+    torch.testing.assert_close(result, expected)
+    result.sum().backward()
+    torch.testing.assert_close(values.grad, 2 * values.detach())
+    assert torch.isfinite(values.grad).all()
+
+
 def reference(pol, N, T, theta, wl):
     """R and T from the scalar tmm package, for every stack, angle and wavelength."""
     R = torch.zeros((N.shape[0], theta.shape[0], wl.shape[0]), dtype=torch.double)

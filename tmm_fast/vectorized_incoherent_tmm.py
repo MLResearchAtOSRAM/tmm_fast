@@ -8,6 +8,7 @@ from .vectorized_tmm_dispersive_multistack import (
     converter2numpy,
     resolve_device,
     check_inputs,
+    _complex_abs_squared,
 )
 
 from typing import Union
@@ -311,9 +312,9 @@ def interface_powers(pol, n_i, n_f, cos_th_i, cos_th_f):
     else:
         raise ValueError("Polarization must be 's' or 'p'")
 
-    T_f = abs(tf ** 2) * backward_flux / forward_flux
-    T_b = abs(tb ** 2) * forward_flux / backward_flux
-    R_f = abs(rf) ** 2
+    T_f = _complex_abs_squared(tf) * backward_flux / forward_flux
+    T_b = _complex_abs_squared(tb) * forward_flux / backward_flux
+    R_f = _complex_abs_squared(rf)
     return T_f, T_b, R_f, R_f
 
 
